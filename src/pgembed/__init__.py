@@ -24,14 +24,26 @@ EXTENSION_PACKAGES = {
     "pgvector": "pgembed_pgvector",
     "pgvectorscale": "pgembed_pgvectorscale",
     "pgtextsearch": "pgembed_pgtextsearch",
+    "pg_duckdb": "pgembed_pgduckdb",
+    "vectorchord": None,
+    "pggraph": None,
+    "age": None,
+    "psql_bm25s": None,
+    "timescaledb": None,
 }
 
 EXTENSION_SO_FILES = {
-    "pgvector": "vector.so",
-    "pgvectorscale": "vectorscale-0.5.1.so",
-    "pgtextsearch": "pg_textsearch.so",
-    "pg_search": "pg_search.so",
-    "pg_duckdb": "pg_duckdb.so",
+    "pgvector": "vector.dylib",
+    "pgvectorscale": "vectorscale-0.9.0.dylib",
+    "pgtextsearch": "pg_textsearch.dylib",
+    "pg_search": "pg_search.dylib",
+    "pg_duckdb": "pg_duckdb.dylib",
+    "vectorchord": "vchord.dylib",
+    "graph": "graph.dylib",
+    "pggraph": "graph.dylib",
+    "age": "age.dylib",
+    "psql_bm25s": "psql_bm25s.dylib",
+    "timescaledb": ("timescaledb.dylib", "timescaledb.so", "timescaledb.dll"),
 }
 
 EXTENSION_NAMES = (
@@ -40,6 +52,12 @@ EXTENSION_NAMES = (
     "pgtextsearch",
     "pg_search",
     "pg_duckdb",
+    "vectorchord",
+    "graph",
+    "pggraph",
+    "age",
+    "psql_bm25s",
+    "timescaledb",
 )
 
 
@@ -59,13 +77,19 @@ def _detect_extensions():
         except ImportError:
             pass
 
-        so_file = EXTENSION_SO_FILES.get(name)
-        if so_file:
+        so_files = EXTENSION_SO_FILES.get(name)
+        if isinstance(so_files, str):
+            so_files = (so_files,)
+        detected = False
+        for so_file in so_files or ():
             bundled_path = EXTENSION_POSTGRES_LIB_PATH / so_file
             if bundled_path.exists():
                 AVAILABLE_EXTENSIONS[name] = True
                 _logger.info(f"Detected extension from bundled lib: {name}")
-                continue
+                detected = True
+                break
+        if detected:
+            continue
 
         AVAILABLE_EXTENSIONS[name] = False
 
@@ -106,6 +130,12 @@ def get_extension_create_name(name: str) -> str:
         "pgtextsearch": "pg_textsearch",
         "pg_search": "pg_search",
         "pg_duckdb": "pg_duckdb",
+        "vectorchord": "vchord",
+        "graph": "graph",
+        "pggraph": "graph",
+        "age": "age",
+        "psql_bm25s": "psql_bm25s",
+        "timescaledb": "timescaledb",
     }
     return create_names.get(name, name)
 
@@ -129,8 +159,10 @@ def get_extension_path(name: str) -> Optional[Path]:
         except ImportError:
             pass
 
-    so_file = EXTENSION_SO_FILES.get(name)
-    if so_file:
+    so_files = EXTENSION_SO_FILES.get(name)
+    if isinstance(so_files, str):
+        so_files = (so_files,)
+    for so_file in so_files or ():
         bundled_path = EXTENSION_POSTGRES_LIB_PATH / so_file
         if bundled_path.exists():
             return bundled_path

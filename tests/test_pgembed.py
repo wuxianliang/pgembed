@@ -53,6 +53,44 @@ def _check_postmaster_info(pgdata : Path, postmaster_info : pgembed.utils.Postma
         assert postmaster_info.socket_path.is_socket()
 
 
+def _check_no_default_age_preload(pg : pgembed.PostgresServer) -> None:
+    conf = pg.pgdata / 'postgresql.conf'
+    assert "shared_preload_libraries = 'age'" not in conf.read_text()
+
+    ret = pg.psql("show shared_preload_libraries;")
+    # parse second row (first two are headers)
+    assert ret.splitlines()[2].strip() == ''
+
+
+def _require_extension(name: str) -> None:
+    if not pgembed.has_extension(name):
+        pytest.skip(f"{name} is not installed in this build")
+
+
+@pytest.fixture
+def tmp_postgres_vchord():
+    _require_extension("vectorchord")
+    tmp_pg_data = tempfile.mkdtemp()
+    with pgembed.get_server(
+        tmp_pg_data,
+        cleanup_mode='delete',
+        shared_preload_libraries='vchord',
+    ) as pg:
+        yield pg
+
+
+@pytest.fixture
+def tmp_postgres_timescaledb():
+    _require_extension("timescaledb")
+    tmp_pg_data = tempfile.mkdtemp()
+    with pgembed.get_server(
+        tmp_pg_data,
+        cleanup_mode='delete',
+        shared_preload_libraries='timescaledb',
+    ) as pg:
+        yield pg
+
+
 def _check_server(pg : pgembed.PostgresServer) -> int:
     assert pg.pgdata.exists()
     postmaster_info = pgembed.utils.PostmasterInfo.read_from_pgdata(pg.pgdata)
@@ -64,6 +102,7 @@ def _check_server(pg : pgembed.PostgresServer) -> int:
     # parse second row (first two are headers)
     ret_path = Path(ret.splitlines()[2].strip())
     assert pg.pgdata == ret_path
+    _check_no_default_age_preload(pg)
     _check_sqlalchemy_works(pg)
     return postmaster_info.pid
 
@@ -252,9 +291,107 @@ def tmp_postgres():
     with pgembed.get_server(tmp_pg_data, cleanup_mode='delete') as pg:
         yield pg
 
+
 def test_pgvector(tmp_postgres):
+    _require_extension("pgvector")
     ret = tmp_postgres.psql("CREATE EXTENSION vector;")
     assert ret.strip() == "CREATE EXTENSION"
+
+
+def test_age(tmp_postgres):
+    _require_extension("age")
+    assert tmp_postgres.psql("CREATE EXTENSION age;").strip() == "CREATE EXTENSION"
+    assert 't' in tmp_postgres.psql(
+        "SELECT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'agtype');"
+    )
+    assert 't' in tmp_postgres.psql(
+        "SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'ag_catalog');"
+    )
+    graph_output = tmp_postgres.psql(
+        "LOAD 'age'; SET search_path = ag_catalog, \"$user\", public; SELECT create_graph('my_graph');"
+    )
+    assert 'create_graph' in graph_output or 'NOTICE' in graph_output
+    assert 't' in tmp_postgres.psql(
+        "SELECT EXISTS (SELECT 1 FROM ag_catalog.ag_graph WHERE name = 'my_graph');"
+    )
+
+
+def test_psql_bm25s(tmp_postgres):
+    _require_extension("psql_bm25s")
+    assert tmp_postgres.psql("CREATE EXTENSION psql_bm25s;").strip() == "CREATE EXTENSION"
+    assert 't' in tmp_postgres.psql(
+        "SELECT EXISTS (SELECT 1 FROM pg_am WHERE amname = 'psql_bm25s');"
+    )
+    assert 't' in tmp_postgres.psql(
+        "SELECT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'psql_bm25s_result_hit');"
+    )
+    bm25_output = tmp_postgres.psql(
+        """
+        DROP TABLE IF EXISTS bm25_smoke;
+        CREATE TABLE bm25_smoke (id integer, body text);
+        INSERT INTO bm25_smoke VALUES
+          (1, 'hello vector search'),
+          (2, 'postgres bm25 search'),
+          (3, 'graph query age');
+        CREATE INDEX bm25_smoke_idx ON bm25_smoke USING psql_bm25s (body);
+        SELECT doc_id, score FROM psql_bm25s_query('bm25_smoke_idx', 'search', 2);
+        """
+    )
+    assert 'CREATE INDEX' in bm25_output
+    assert 'doc_id' in bm25_output
+    assert '(2 rows)' in bm25_output
+
+
+def test_vectorchord_preload(tmp_postgres_vchord):
+    _require_extension("vectorchord")
+    assert tmp_postgres_vchord.psql("CREATE EXTENSION vector;").strip() == "CREATE EXTENSION"
+    vchord_output = tmp_postgres_vchord.psql("CREATE EXTENSION vchord;")
+    assert "CREATE EXTENSION" in vchord_output or vchord_output.strip() == ""
+    am_output = tmp_postgres_vchord.psql(
+        "SELECT amname FROM pg_am WHERE amname IN ('vchordg', 'vchordrq') ORDER BY 1;"
+    )
+    assert 'vchordg' in am_output
+    assert 'vchordrq' in am_output
+    index_output = tmp_postgres_vchord.psql(
+        """
+        DROP TABLE IF EXISTS vchord_smoke;
+        CREATE TABLE vchord_smoke (id integer, emb vector(3));
+        INSERT INTO vchord_smoke VALUES
+          (1, '[1,0,0]'),
+          (2, '[0,1,0]'),
+          (3, '[0,0,1]');
+        CREATE INDEX vchord_smoke_idx ON vchord_smoke USING vchordg (emb vector_l2_ops);
+        """
+    )
+    assert 'CREATE INDEX' in index_output
+
+
+def test_timescaledb_preload(tmp_postgres_timescaledb):
+    _require_extension("timescaledb")
+    assert (
+        tmp_postgres_timescaledb.create_extension("timescaledb").strip()
+        == "CREATE EXTENSION"
+    )
+    hypertable_output = tmp_postgres_timescaledb.psql(
+        """
+        DROP TABLE IF EXISTS timescale_smoke;
+        CREATE TABLE timescale_smoke (time timestamptz NOT NULL, value double precision);
+        SELECT create_hypertable('timescale_smoke', 'time');
+        SELECT hypertable_name
+          FROM timescaledb_information.hypertables
+         WHERE hypertable_name = 'timescale_smoke';
+        """
+    )
+    assert 'timescale_smoke' in hypertable_output
+
+
+def test_graph(tmp_postgres):
+    _require_extension("graph")
+    assert pgembed.has_extension("pggraph")
+    assert tmp_postgres.create_extension("pggraph").strip() == "CREATE EXTENSION"
+    status_output = tmp_postgres.psql("SELECT * FROM graph.status();")
+    assert 'node_count' in status_output
+    assert 'sync_mode' in status_output
 
 def test_start_failure_log(caplog):
     """ Test server log contents are shown in python log when failures

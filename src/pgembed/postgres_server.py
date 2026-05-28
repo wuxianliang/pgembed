@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Optional, Dict, Union
+from typing import Iterable, Optional, Dict, Union
 import shutil
 import atexit
 import subprocess
@@ -54,7 +54,13 @@ class PostgresServer:
     lock_path = platformdirs.user_runtime_path("python_PostgresServer") / ".lockfile"
     _lock = fasteners.InterProcessLock(lock_path)
 
-    def __init__(self, pgdata: Path, *, cleanup_mode: Optional[str] = "stop"):
+    def __init__(
+        self,
+        pgdata: Path,
+        *,
+        cleanup_mode: Optional[str] = "stop",
+        shared_preload_libraries: Optional[Union[str, Iterable[str]]] = None,
+    ):
         """Initializes the postgresql server instance.
         Constructor is intended to be called directly, use get_server() instead.
         """
@@ -77,6 +83,9 @@ class PostgresServer:
         list_path = self.pgdata / ".handle_pids.json"
         self.global_process_id_list = DiskList(list_path)
         self.cleanup_mode = cleanup_mode
+        self.shared_preload_libraries = self._normalize_preload_libraries(
+            shared_preload_libraries
+        )
         self._postmaster_info: Optional[PostmasterInfo] = None
         self._count = 0
 
@@ -84,6 +93,7 @@ class PostgresServer:
         with self._lock:
             self._instances[self.pgdata] = self
             self.ensure_pgdata_inited()
+            self.ensure_shared_preload_libraries()
             self.ensure_postgres_running()
             self.global_process_id_list.get_and_add(os.getpid())
 
@@ -101,6 +111,50 @@ class PostgresServer:
     def get_uri(self, database: Optional[str] = None) -> str:
         """Returns a connection string for the postgresql server."""
         return self.get_postmaster_info().get_uri(database=database)
+
+    @staticmethod
+    def _normalize_preload_libraries(
+        libraries: Optional[Union[str, Iterable[str]]],
+    ) -> tuple[str, ...]:
+        if libraries is None:
+            return ()
+        if isinstance(libraries, str):
+            libraries = libraries.split(",")
+        return tuple(lib.strip() for lib in libraries if lib.strip())
+
+    def ensure_shared_preload_libraries(self) -> None:
+        """Configures shared_preload_libraries before PostgreSQL starts."""
+        if not self.shared_preload_libraries:
+            return
+
+        conf_file = self.pgdata / "postgresql.conf"
+        conf_text = conf_file.read_text()
+        existing: list[str] = []
+        lines = conf_text.splitlines()
+        setting_idx: Optional[int] = None
+
+        for idx, line in enumerate(lines):
+            stripped = line.strip()
+            if not stripped.startswith("shared_preload_libraries"):
+                continue
+            setting_idx = idx
+            _, value = stripped.split("=", 1)
+            existing = [
+                lib.strip().strip("'\"")
+                for lib in value.split("#", 1)[0].split(",")
+                if lib.strip().strip("'\"")
+            ]
+            break
+
+        preload_libraries = list(
+            dict.fromkeys([*existing, *self.shared_preload_libraries])
+        )
+        preload_line = "shared_preload_libraries = '" + ",".join(preload_libraries) + "'"
+        if setting_idx is None:
+            lines.append(preload_line)
+        else:
+            lines[setting_idx] = preload_line
+        conf_file.write_text("\n".join(lines) + "\n")
 
     def ensure_pgdata_inited(self) -> None:
         """Initializes the pgdata directory if it is not already initialized."""
@@ -168,6 +222,7 @@ class PostgresServer:
                 pgdata=self.pgdata,
                 user=self.system_user,
             )
+
         else:
             _logger.info("PG_VERSION file found, skipping initdb")
 
@@ -332,6 +387,12 @@ class PostgresServer:
             "pg_textsearch": "pgtextsearch",
             "pg_search": "pg_search",
             "pg_duckdb": "pg_duckdb",
+            "vchord": "vectorchord",
+            "graph": "graph",
+            "pggraph": "graph",
+            "age": "age",
+            "psql_bm25s": "psql_bm25s",
+            "timescaledb": "timescaledb",
         }
 
         pkg_name = extension_map.get(extension_name, extension_name)
@@ -342,6 +403,40 @@ class PostgresServer:
             )
         create_name = get_extension_create_name(pkg_name)
         return self.psql(f"CREATE EXTENSION IF NOT EXISTS {create_name};")
+
+    def age_setup(self, conn=None):
+        """Initialize AGE session for a connection."""
+        import psycopg2
+        close_conn = conn is None
+        if conn is None:
+            conn = psycopg2.connect(self.get_uri())
+        try:
+            with conn.cursor() as cur:
+                cur.execute("LOAD 'age';")
+                cur.execute('SET search_path = ag_catalog, "$user", public;')
+                try:
+                    cur.execute("SELECT * FROM ag_catalog.create_graph('my_graph');")
+                except Exception:
+                    conn.rollback()
+            conn.commit()
+        finally:
+            if close_conn:
+                conn.close()
+
+    def age_query(self, query: str, graph_name: str = "my_graph") -> list:
+        """Execute an AGE openCypher query."""
+        import psycopg2
+        conn = psycopg2.connect(self.get_uri())
+        try:
+            self.age_setup(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT * FROM ag_catalog.cypher(%s, %s) AS (result agtype);",
+                    (graph_name, query),
+                )
+                return cur.fetchall()
+        finally:
+            conn.close()
 
     def __enter__(self):
         self._count += 1
@@ -358,7 +453,9 @@ class PostgresServer:
 
 
 def get_server(
-    pgdata: Union[Path, str], cleanup_mode: Optional[str] = "stop"
+    pgdata: Union[Path, str],
+    cleanup_mode: Optional[str] = "stop",
+    shared_preload_libraries: Optional[Union[str, Iterable[str]]] = None,
 ) -> PostgresServer:
     """Returns handle to postgresql server instance for the given pgdata directory.
     Args:
@@ -367,6 +464,8 @@ def get_server(
         cleanup_mode: If 'stop', the server will be stopped when the last handle is closed (default)
                         If 'delete', the server will be stopped and the pgdata directory will be deleted.
                         If None, the server will not be stopped or deleted.
+        shared_preload_libraries: PostgreSQL libraries to preload before server startup
+                        (for example, 'timescaledb' or ['timescaledb', 'vchord']).
 
         To create a temporary server, use mkdtemp() to create a temporary directory and pass it as pg_data,
         and set cleanup_mode to 'delete'.
@@ -386,4 +485,8 @@ def get_server(
     if pgdata in PostgresServer._instances:
         return PostgresServer._instances[pgdata]
 
-    return PostgresServer(pgdata, cleanup_mode=cleanup_mode)
+    return PostgresServer(
+        pgdata,
+        cleanup_mode=cleanup_mode,
+        shared_preload_libraries=shared_preload_libraries,
+    )

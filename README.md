@@ -28,8 +28,10 @@ Think of it like SQLite, but with the power of PostgreSQL. Just `pip install pge
 - **No admin rights needed**: Runs without `sudo` or root access
 - **Handles edge cases**: Works in Docker containers, Google Colab, and environments with multiple PostgreSQL installations
 - **Simple initialization**: `pgembed.get_server(MY_DATA_DIR)` handles `initdb`, port management, and process cleanup automatically
-- **Vector search ready**: Includes [pgvector](https://github.com/pgvector/pgvector) and [pgvectorscale](https://github.com/timescale/pgvectorscale) extensions for vector similarity queries and high-performance vector storage
-- **Text search ready**: Includes [pg_textsearch](https://github.com/timescale/pg_textsearch) extension for BM25-based full-text search with ranking
+- **Vector search ready**: Includes [pgvector](https://github.com/pgvector/pgvector), [pgvectorscale](https://github.com/timescale/pgvectorscale), and [VectorChord](https://github.com/tensorchord/VectorChord) extensions for vector similarity queries and high-performance vector storage
+- **Graph ready**: Includes [Apache AGE](https://github.com/apache/age) and [pgGraph](https://github.com/evokoa/pggraph) (`CREATE EXTENSION graph;`, Python alias `pggraph`) for graph traversals and property graphs
+- **Text search ready**: Includes [pg_textsearch](https://github.com/timescale/pg_textsearch) and [psql_bm25s](https://github.com/Intelligent-Internet/psql_bm25s) extensions for BM25-based full-text search with ranking
+- **Time-series ready**: Includes [TimescaleDB](https://github.com/timescale/timescaledb) for hypertables and time-series workloads
 
 ## Quick start
 
@@ -64,9 +66,9 @@ pip install pgembed-pgvector pgembed-pgvectorscale pgembed-pgtextsearch
 ```
 
 Available extensions:
-- `pgembed-pgvector`: Vector similarity search (works on all platforms)
-- `pgembed-pgvectorscale`: High-performance vector storage (requires Rust, not available on Alpine/Windows)
-- `pgembed-pgtextsearch`: BM25-based full-text search (requires Rust, not available on Alpine/Windows)
+- Package-backed wheels: `pgembed-pgvector`, `pgembed-pgvectorscale`, `pgembed-pgtextsearch`
+- Bundled native extensions built by `pgbuild/Makefile`: `pg_duckdb`, `pg_search`, `vectorchord`, `graph` (pgGraph; Python alias `pggraph`), `age`, `psql_bm25s`, `timescaledb`
+
 
 ### Checking available extensions
 
@@ -75,12 +77,12 @@ import pgembed
 
 # Check which extensions are available
 print(pgembed.list_extensions())
-# {'pgvector': True, 'pgvectorscale': True, 'pgtextsearch': False, 'pg_duckdb': True}
+# {'pgvector': True, 'pgvectorscale': True, 'pgtextsearch': False, 'pg_search': False, 'pg_duckdb': True, 'vectorchord': True, 'graph': True, 'pggraph': True, 'age': True, 'psql_bm25s': True, 'timescaledb': True}
 
 # Check if a specific extension is available
-if pgembed.has_extension('pgvector'):
+if pgembed.has_extension('pggraph'):
     # Create the extension
-    server.create_extension('vector')
+    server.create_extension('pggraph')
 ```
 
 ### Platform Support
@@ -88,6 +90,19 @@ if pgembed.has_extension('pgvector'):
 - **pgvector**: Works on Linux, macOS (Intel & Apple Silicon), Windows
 - **pgvectorscale**: Works on Linux, macOS (Intel & Apple Silicon). NOT available on Alpine Linux or Windows (requires Rust)
 - **pgtextsearch**: Works on Linux, macOS (Intel & Apple Silicon). NOT available on Alpine Linux or Windows (requires Rust)
+- **Bundled native extensions** (`pg_duckdb`, `pg_search`, `vectorchord`, `graph` / pgGraph / `pggraph`, `age`, `psql_bm25s`, `timescaledb`): built from source via `pgbuild/Makefile`; availability depends on platform and toolchain
+
+TimescaleDB requires `shared_preload_libraries = 'timescaledb'` before PostgreSQL starts. Configure it when creating the server:
+
+```python
+import pgembed
+
+with pgembed.get_server(
+    "/path/to/my/data/dir",
+    shared_preload_libraries="timescaledb",
+) as server:
+    server.create_extension("timescaledb")
+```
 
 ### Building specific extensions
 
@@ -103,8 +118,26 @@ make pgvectorscale
 # Build only pgtextsearch
 make pgtextsearch
 
+# Build only vectorchord
+make vectorchord
+
+# Build only graph (pgGraph)
+make graph
+
+# Build only age
+make age
+
+# Build only psql_bm25s
+make psql_bm25s
+
+# Build only timescaledb
+make timescaledb
+
+# Build only pg_duckdb
+make pg_duckdb
+
 # Build specific combination
-make EXTENSIONS="pgvector pgtextsearch" all
+make EXTENSIONS="pgvector pgtextsearch graph timescaledb" all
 ```
 
 ## History
@@ -113,4 +146,4 @@ pgembed is a fork of [pgserver](https://github.com/orm011/pgserver), which was i
 
 - Multi-platform support (Linux, macOS, Windows)
 - Robust process management and cleanup
-- Built-in pgvector, pgvectorscale, and pg_textsearch extensions
+- Built-in pgvector, pgvectorscale, pg_textsearch, pg_duckdb, pg_search, vectorchord, graph (pgGraph / pggraph), age, psql_bm25s, and timescaledb extensions
