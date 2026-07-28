@@ -135,3 +135,8 @@ dmypy.json
 build/
 pgbuild/
 src/pgembed/pginstall
+
+# macOS / stray tooling artifacts (never commit)
+.DS_Store
+/:runner_exit_code_file
+/:

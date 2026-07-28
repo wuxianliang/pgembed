@@ -67,6 +67,78 @@ def _require_extension(name: str) -> None:
         pytest.skip(f"{name} is not installed in this build")
 
 
+VECTORCHORD_VARIANTS = (
+    ("vectorchord", "vchord"),
+)
+
+
+def _assert_vectorchord_artifacts_packaged(extension_key: str, sql_name: str) -> None:
+    """Check documented/built/packaged artifacts before creatable smoke tests."""
+    library_path = pgembed.get_extension_path(extension_key)
+    if library_path is None:
+        pytest.skip(f"{extension_key} is not installed in this build")
+
+    assert library_path.exists(), f"{extension_key} library is not packaged: {library_path}"
+    assert library_path.name.startswith(f"{sql_name}."), (
+        f"{extension_key} library should use SQL/library stem {sql_name}: {library_path}"
+    )
+
+    control_path = pgembed.EXTENSION_SHARE_PATH / f"{sql_name}.control"
+    assert control_path.exists(), (
+        f"{extension_key} is detected as built, but control file is not packaged: {control_path}"
+    )
+
+    default_version = pgembed._read_extension_default_version(sql_name)
+    assert default_version, f"{extension_key} control file has no default_version"
+    install_sql_path = pgembed.EXTENSION_SHARE_PATH / f"{sql_name}--{default_version}.sql"
+    assert pgembed.get_extension_install_sql_path(extension_key) == install_sql_path
+    assert install_sql_path.exists(), (
+        f"{extension_key} is detected as built, but default-version install SQL script "
+        f"is not packaged for creatable extension {sql_name}: {install_sql_path}"
+    )
+    assert pgembed.has_extension(extension_key), (
+        f"{extension_key} has library/control/SQL artifacts, but pgembed discovery "
+        "does not report it as creatable"
+    )
+
+
+@pytest.mark.parametrize("extension_key,sql_name", VECTORCHORD_VARIANTS)
+def test_vectorchord_variant_discovery_and_create_names(extension_key: str, sql_name: str):
+    assert pgembed.get_extension_create_name(extension_key) == sql_name
+    if pgembed.has_extension(extension_key):
+        path = pgembed.get_extension_path(extension_key)
+        assert path is not None
+        assert path.name.startswith(f"{sql_name}.")
+
+
+@pytest.mark.parametrize("extension_key,sql_name", VECTORCHORD_VARIANTS)
+def test_vectorchord_variant_artifacts_packaged_for_creatable_extensions(
+    extension_key: str, sql_name: str
+):
+    _assert_vectorchord_artifacts_packaged(extension_key, sql_name)
+
+
+@pytest.mark.parametrize(
+    "extension_name,expected_sql",
+    (
+        ("vchord", "CREATE EXTENSION IF NOT EXISTS vchord;"),
+        ("vectorchord", "CREATE EXTENSION IF NOT EXISTS vchord;"),
+    ),
+)
+def test_vectorchord_create_extension_names(monkeypatch, extension_name: str, expected_sql: str):
+    monkeypatch.setitem(pgembed.AVAILABLE_EXTENSIONS, "vectorchord", True)
+    pg = pgembed.PostgresServer.__new__(pgembed.PostgresServer)
+    commands = []
+
+    def fake_psql(command: str) -> str:
+        commands.append(command)
+        return "CREATE EXTENSION\n"
+
+    monkeypatch.setattr(pg, "psql", fake_psql)
+    assert pg.create_extension(extension_name).strip() == "CREATE EXTENSION"
+    assert commands == [expected_sql]
+
+
 @pytest.fixture
 def tmp_postgres_vchord():
     _require_extension("vectorchord")
@@ -342,28 +414,113 @@ def test_psql_bm25s(tmp_postgres):
     assert '(2 rows)' in bm25_output
 
 
-def test_vectorchord_preload(tmp_postgres_vchord):
-    _require_extension("vectorchord")
-    assert tmp_postgres_vchord.psql("CREATE EXTENSION vector;").strip() == "CREATE EXTENSION"
-    vchord_output = tmp_postgres_vchord.psql("CREATE EXTENSION vchord;")
-    assert "CREATE EXTENSION" in vchord_output or vchord_output.strip() == ""
-    am_output = tmp_postgres_vchord.psql(
-        "SELECT amname FROM pg_am WHERE amname IN ('vchordg', 'vchordrq') ORDER BY 1;"
+def _psql_tuples(pg: pgembed.PostgresServer, query: str) -> list[tuple]:
+    """Run SQL through psycopg2 for structured assertions."""
+    import psycopg2
+
+    conn = psycopg2.connect(pg.get_uri())
+    try:
+        with conn.cursor() as cur:
+            cur.execute(query)
+            rows = cur.fetchall()
+        conn.commit()
+        return rows
+    finally:
+        conn.close()
+
+
+def _start_vectorchord_variant(extension_key: str, preload_name: str):
+    _require_extension(extension_key)
+    tmp_pg_data = tempfile.mkdtemp()
+    return pgembed.get_server(
+        tmp_pg_data,
+        cleanup_mode='delete',
+        shared_preload_libraries=preload_name,
     )
-    assert 'vchordg' in am_output
-    assert 'vchordrq' in am_output
-    index_output = tmp_postgres_vchord.psql(
-        """
-        DROP TABLE IF EXISTS vchord_smoke;
-        CREATE TABLE vchord_smoke (id integer, emb vector(3));
-        INSERT INTO vchord_smoke VALUES
-          (1, '[1,0,0]'),
-          (2, '[0,1,0]'),
-          (3, '[0,0,1]');
-        CREATE INDEX vchord_smoke_idx ON vchord_smoke USING vchordg (emb vector_l2_ops);
-        """
-    )
-    assert 'CREATE INDEX' in index_output
+
+
+def _run_vectorchord_variant_smoke(extension_key: str, sql_name: str) -> dict:
+    _assert_vectorchord_artifacts_packaged(extension_key, sql_name)
+    results = {
+        "extension_key": extension_key,
+        "extension_name": sql_name,
+        "preload_libraries": sql_name,
+    }
+
+    with _start_vectorchord_variant(extension_key, sql_name) as pg:
+        assert pg.psql("CREATE EXTENSION vector;").strip() == "CREATE EXTENSION"
+        extension_output = pg.create_extension(extension_key)
+        assert "CREATE EXTENSION" in extension_output or extension_output.strip() == ""
+
+        preload_rows = _psql_tuples(pg, "SHOW shared_preload_libraries;")
+        results["preload_libraries"] = preload_rows[0][0]
+        assert results["preload_libraries"] == sql_name
+
+        access_methods = [
+            row[0]
+            for row in _psql_tuples(
+                pg,
+                "SELECT amname FROM pg_am WHERE amname IN ('vchordg', 'vchordrq') ORDER BY 1;",
+            )
+        ]
+        assert access_methods == ["vchordg", "vchordrq"]
+        results["access_methods"] = access_methods
+
+        assert (
+            pg.psql(
+                """
+                DROP TABLE IF EXISTS vchord_smoke;
+                CREATE TABLE vchord_smoke (id integer PRIMARY KEY, emb vector(3));
+                INSERT INTO vchord_smoke VALUES
+                  (1, '[1,0,0]'),
+                  (2, '[0,1,0]'),
+                  (3, '[0,0,1]'),
+                  (4, '[0.9,0.1,0]'),
+                  (5, '[0.1,0.9,0]'),
+                  (6, '[0,0.1,0.9]');
+                """
+            ).strip()
+            != ""
+        )
+        expected_order = [1, 4, 5]
+        index_results = {}
+        for access_method in ("vchordg", "vchordrq"):
+            index_name = f"vchord_smoke_{access_method}_idx"
+            index_output = pg.psql(
+                f"CREATE INDEX {index_name} ON vchord_smoke USING {access_method} (emb vector_l2_ops);"
+            )
+            assert "CREATE INDEX" in index_output
+
+            plan = pg.psql(
+                """
+                SET enable_seqscan TO off;
+                EXPLAIN (COSTS OFF)
+                SELECT id FROM vchord_smoke ORDER BY emb <-> '[1,0,0]' LIMIT 3;
+                """
+            )
+            assert f"Index Scan using {index_name}" in plan
+
+            order = [
+                row[0]
+                for row in _psql_tuples(
+                    pg,
+                    "SELECT id FROM vchord_smoke ORDER BY emb <-> '[1,0,0]' LIMIT 3;",
+                )
+            ]
+            assert order == expected_order
+            index_results[access_method] = {
+                "order": order,
+                "uses_index": f"Index Scan using {index_name}" in plan,
+            }
+            pg.psql(f"DROP INDEX {index_name};")
+        results["index_results"] = index_results
+
+    return results
+
+
+@pytest.mark.parametrize("extension_key,sql_name", VECTORCHORD_VARIANTS)
+def test_vectorchord_variant_preload_sql_api_and_indexes(extension_key: str, sql_name: str):
+    _run_vectorchord_variant_smoke(extension_key, sql_name)
 
 
 def test_timescaledb_preload(tmp_postgres_timescaledb):
@@ -384,14 +541,6 @@ def test_timescaledb_preload(tmp_postgres_timescaledb):
     )
     assert 'timescale_smoke' in hypertable_output
 
-
-def test_graph(tmp_postgres):
-    _require_extension("graph")
-    assert pgembed.has_extension("pggraph")
-    assert tmp_postgres.create_extension("pggraph").strip() == "CREATE EXTENSION"
-    status_output = tmp_postgres.psql("SELECT * FROM graph.status();")
-    assert 'node_count' in status_output
-    assert 'sync_mode' in status_output
 
 def test_start_failure_log(caplog):
     """ Test server log contents are shown in python log when failures

@@ -2,6 +2,8 @@ SHELL := /bin/bash
 INSTALL_PREFIX := $(shell pwd)/../src/pgembed/pginstall
 BUILD := $(shell pwd)/pgbuild/
 IS_MUSL ?= $(shell if command -v ldd >/dev/null 2>&1 && ldd --version 2>&1 | grep -qi musl; then echo 1; else echo 0; fi)
+# pg_net links -lcurl; probe once so we can skip it gracefully when libcurl is absent.
+HAS_LIBCURL ?= $(shell if command -v curl-config >/dev/null 2>&1 || [ "$$(uname -s)" = "Darwin" ]; then echo 1; else echo 0; fi)
 
 # Detect Windows and add .exe extension for executables
 ifeq ($(OS),Windows_NT)
@@ -23,21 +25,18 @@ else
 endif
 
 ifeq ($(RUST_EXTENSIONS_SUPPORTED),1)
-EXTENSIONS ?= pgvector pgvectorscale pgtextsearch vectorchord graph age psql_bm25s timescaledb
+EXTENSIONS ?= pgvector vectorchord pg_duckdb age psql_bm25s timescaledb pg_cron pg_net
 else
-EXTENSIONS ?= pgvector age psql_bm25s timescaledb
+EXTENSIONS ?= pgvector pg_duckdb age psql_bm25s timescaledb pg_cron pg_net
 endif
 ifeq ($(OS),Windows_NT)
-EXTENSIONS := $(filter-out timescaledb,$(EXTENSIONS))
-endif
-ifneq ($(OS),Windows_NT)
-EXTENSIONS ?= $(EXTENSIONS) pg_duckdb
+EXTENSIONS := $(filter-out timescaledb pg_cron pg_net pg_duckdb,$(EXTENSIONS))
 endif
 
 REQUESTED_EXTENSIONS := $(strip $(EXTENSIONS))
 UNSUPPORTED_EXTENSIONS :=
-ifeq ($(IS_MUSL),1)
-UNSUPPORTED_EXTENSIONS += pgvectorscale pgtextsearch pg_search
+ifeq ($(HAS_LIBCURL),0)
+UNSUPPORTED_EXTENSIONS += pg_net
 endif
 SKIPPED_EXTENSIONS := $(filter $(UNSUPPORTED_EXTENSIONS),$(REQUESTED_EXTENSIONS))
 ifneq ($(strip $(SKIPPED_EXTENSIONS)),)
@@ -48,17 +47,15 @@ EXTENSIONS := $(filter-out $(UNSUPPORTED_EXTENSIONS),$(REQUESTED_EXTENSIONS))
 .PHONY: all
 all: postgres $(EXTENSIONS)
 
-.PHONY: pgvector pgvectorscale pgtextsearch pg_search pg_duckdb vectorchord graph age psql_bm25s timescaledb
+.PHONY: pgvector pg_duckdb vectorchord age psql_bm25s timescaledb pg_cron pg_net
 pgvector: postgres $(INSTALL_PREFIX)/lib/vector.so
-pgvectorscale: postgres $(INSTALL_PREFIX)/lib/vectorscale.so
-pgtextsearch: postgres $(INSTALL_PREFIX)/lib/pg_textsearch.so
-pg_search: postgres $(INSTALL_PREFIX)/lib/pg_search.so
 pg_duckdb: postgres $(INSTALL_PREFIX)/lib/postgresql/pg_duckdb.$(PG_DLSUFFIX)
 vectorchord: postgres $(INSTALL_PREFIX)/lib/vchord.so
-graph: postgres $(INSTALL_PREFIX)/lib/graph.so
 age: postgres $(INSTALL_PREFIX)/lib/age.so
 psql_bm25s: postgres $(INSTALL_PREFIX)/lib/psql_bm25s.so
 timescaledb: postgres $(INSTALL_PREFIX)/lib/postgresql/timescaledb.$(PG_DLSUFFIX)
+pg_cron: postgres $(INSTALL_PREFIX)/lib/postgresql/pg_cron.$(PG_DLSUFFIX)
+pg_net: postgres $(INSTALL_PREFIX)/lib/postgresql/pg_net.$(PG_DLSUFFIX)
 
 ### postgres
 POSTGRES_VERSION := 17-stable
@@ -157,35 +154,6 @@ else
 	$(error vectorchord build is not supported on musl libc distributions (e.g., Alpine) due to cargo-pgrx issues)
 endif
 
-### graph
-PGGRAPH_TAG := v0.1.3
-PGGRAPH_REF := 9fc4fb2121fbaed0352dfddc8ab5b09e153bb30c
-PGGRAPH_URL := https://github.com/evokoa/pggraph/archive/$(PGGRAPH_REF).tar.gz
-PGGRAPH_DIR := pggraph-$(PGGRAPH_TAG)
-PGGRAPH_CRATE_DIR := $(PGGRAPH_DIR)/graph
-
-$(PGGRAPH_DIR).tar.gz:
-	curl -L -o $(PGGRAPH_DIR).tar.gz $(PGGRAPH_URL)
-
-$(PGGRAPH_CRATE_DIR)/Cargo.toml: $(PGGRAPH_DIR).tar.gz
-	mkdir -p $(PGGRAPH_DIR)
-	tar xzf $(PGGRAPH_DIR).tar.gz -C $(PGGRAPH_DIR) --strip-components=1
-	touch $(PGGRAPH_CRATE_DIR)/Cargo.toml
-
-$(INSTALL_PREFIX)/lib/graph.so: $(PGGRAPH_CRATE_DIR)/Cargo.toml $(INSTALL_PREFIX)/bin/postgres
-ifeq ($(RUST_EXTENSIONS_SUPPORTED),1)
-	unset MAKELEVEL && unset MAKEFLAGS && unset MFLAGS \
-		&& export PATH="$$HOME/.cargo/bin:$$PATH" \
-		&& export RUSTUP_TOOLCHAIN=1.95.0 \
-		&& cd $(PGGRAPH_CRATE_DIR) \
-		&& cargo pgrx init --pg17 $(INSTALL_PREFIX)/bin/pg_config$(EXE_EXT) \
-		&& cargo pgrx install --release --features pg17 --no-default-features --pg-config $(INSTALL_PREFIX)/bin/pg_config$(EXE_EXT)
-else ifeq ($(OS),Windows_NT)
-	$(error graph build is not supported on Windows due to cargo-pgrx issues)
-else
-	$(error graph build is not supported on musl libc distributions (e.g., Alpine) due to cargo-pgrx issues)
-endif
-
 ### age (Apache AGE - Graph Extension)
 AGE_TAG := release/PG17/1.7.0
 AGE_REPO := https://github.com/apache/age.git
@@ -200,6 +168,48 @@ $(INSTALL_PREFIX)/lib/age.so: $(AGE_DIR)/Makefile $(INSTALL_PREFIX)/bin/postgres
 	&& $(MAKE) -C $(AGE_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config$(EXE_EXT) -j \
 	&& $(MAKE) -C $(AGE_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config$(EXE_EXT) install
 
+### pg_cron (job scheduler; must be preloaded)
+PG_CRON_TAG := v1.6.4
+PG_CRON_REPO := https://github.com/citusdata/pg_cron.git
+PG_CRON_DIR := pg_cron-$(PG_CRON_TAG)
+
+$(PG_CRON_DIR)/Makefile:
+	git clone --branch $(PG_CRON_TAG) --single-branch --depth 1 $(PG_CRON_REPO) $(PG_CRON_DIR)
+	touch $(PG_CRON_DIR)/Makefile
+
+# pg_cron must be in shared_preload_libraries; cron.database_name defaults to
+# 'postgres', which matches pgembed's default database, so no extra config needed.
+$(INSTALL_PREFIX)/lib/postgresql/pg_cron.$(PG_DLSUFFIX): $(PG_CRON_DIR)/Makefile $(INSTALL_PREFIX)/bin/postgres
+	unset MAKELEVEL && unset MAKEFLAGS && unset MFLAGS \
+	&& $(MAKE) -C $(PG_CRON_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config$(EXE_EXT) -j \
+	&& $(MAKE) -C $(PG_CRON_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config$(EXE_EXT) install
+
+### pg_net (async HTTP client; requires libcurl; must be preloaded)
+PG_NET_TAG := v0.20.5
+PG_NET_REPO := https://github.com/supabase/pg_net.git
+PG_NET_DIR := pg_net-$(PG_NET_TAG)
+# pg_net's Makefile uses SHLIB_LINK = -lcurl. Probe a homebrew curl prefix so
+# headers/libs resolve on macOS; on Linux install libcurl-dev / libcurl-devel.
+PG_NET_CURL_PREFIX ?= $(shell if [ -d /opt/homebrew/opt/curl ]; then echo /opt/homebrew/opt/curl; elif [ -d /usr/local/opt/curl ]; then echo /usr/local/opt/curl; fi)
+PG_NET_CURL_CPPFLAGS := $(if $(PG_NET_CURL_PREFIX),-I$(PG_NET_CURL_PREFIX)/include,)
+PG_NET_CURL_LDFLAGS := $(if $(PG_NET_CURL_PREFIX),-L$(PG_NET_CURL_PREFIX)/lib,)
+
+$(PG_NET_DIR)/Makefile:
+	git clone --branch $(PG_NET_TAG) --single-branch --depth 1 $(PG_NET_REPO) $(PG_NET_DIR)
+	touch $(PG_NET_DIR)/Makefile
+
+# pg_net is a background worker: it must be in shared_preload_libraries.
+$(INSTALL_PREFIX)/lib/postgresql/pg_net.$(PG_DLSUFFIX): $(PG_NET_DIR)/Makefile $(INSTALL_PREFIX)/bin/postgres
+ifneq ($(OS),Windows_NT)
+	unset MAKELEVEL && unset MAKEFLAGS && unset MFLAGS \
+	&& $(MAKE) -C $(PG_NET_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config$(EXE_EXT) \
+		CPPFLAGS="$(PG_NET_CURL_CPPFLAGS)" LDFLAGS="$(PG_NET_CURL_LDFLAGS)" -j \
+	&& $(MAKE) -C $(PG_NET_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config$(EXE_EXT) \
+		CPPFLAGS="$(PG_NET_CURL_CPPFLAGS)" LDFLAGS="$(PG_NET_CURL_LDFLAGS)" install
+else
+	$(error pg_net build is not supported on Windows by this Makefile)
+endif
+
 ### psql_bm25s (BM25S Full-Text Search)
 PSQL_BM25S_TAG := main
 PSQL_BM25S_REPO := https://github.com/Intelligent-Internet/psql_bm25s.git
@@ -207,8 +217,6 @@ PSQL_BM25S_DIR := psql_bm25s-$(PSQL_BM25S_TAG)
 
 $(PSQL_BM25S_DIR)/Makefile:
 	git clone --branch $(PSQL_BM25S_TAG) --single-branch --depth 1 $(PSQL_BM25S_REPO) $(PSQL_BM25S_DIR)
-	sed -i '' 's|SHLIB_LINK += $$(ICU_LIBS)|SHLIB_LINK += -L/opt/homebrew/opt/icu4c@78/lib -licui18n -licuuc -licudata|' $(PSQL_BM25S_DIR)/Makefile
-	sed -i '' 's|ICU_CPPFLAGS.*|PG_CPPFLAGS = -I/opt/homebrew/opt/icu4c@78/include -I$$(CURDIR)/src|' $(PSQL_BM25S_DIR)/Makefile
 	touch $(PSQL_BM25S_DIR)/Makefile
 
 $(INSTALL_PREFIX)/lib/psql_bm25s.so: $(PSQL_BM25S_DIR)/Makefile $(INSTALL_PREFIX)/bin/postgres
@@ -241,86 +249,6 @@ else
 	$(error timescaledb build is not supported by this Makefile on Windows)
 endif
 
-### pgvectorscale
-PGVECTORSCALE_TAG := 0.9.0
-PGVECTORSCALE_URL := https://github.com/timescale/pgvectorscale/archive/refs/tags/$(PGVECTORSCALE_TAG).tar.gz
-PGVECTORSCALE_DIR := pgvectorscale-$(PGVECTORSCALE_TAG)
-
-$(PGVECTORSCALE_DIR).tar.gz:
-	curl -L -o $(PGVECTORSCALE_DIR).tar.gz $(PGVECTORSCALE_URL)
-
-$(PGVECTORSCALE_DIR)/pgvectorscale/Cargo.toml: $(PGVECTORSCALE_DIR).tar.gz
-	mkdir -p $(PGVECTORSCALE_DIR)
-	tar xzf $(PGVECTORSCALE_DIR).tar.gz -C $(PGVECTORSCALE_DIR) --strip-components=1
-	touch $(PGVECTORSCALE_DIR)/pgvectorscale/Cargo.toml
-
-$(INSTALL_PREFIX)/lib/vectorscale.so: $(PGVECTORSCALE_DIR)/pgvectorscale/Cargo.toml $(INSTALL_PREFIX)/bin/postgres
-ifeq ($(RUST_EXTENSIONS_SUPPORTED),1)
-	unset MAKELEVEL && unset MAKEFLAGS && unset MFLAGS \
-		&& export PATH="$$HOME/.cargo-pgrx-0.17.0/bin:$(INSTALL_PREFIX)/bin:$$HOME/.cargo/bin:$$PATH" \
-		&& cd $(PGVECTORSCALE_DIR)/pgvectorscale \
-		&& sed -i '' 's/pgrx = "=0.16.1"/pgrx = "=0.17.0"/' Cargo.toml \
-		&& sed -i '' 's/pgrx-tests = "=0.16.1"/pgrx-tests = "=0.17.0"/' Cargo.toml \
-		&& sed -i '' 's/pgrx-pg-config = "=0.16.1"/pgrx-pg-config = "=0.17.0"/' Cargo.toml \
-		&& RUSTUP_TOOLCHAIN=nightly cargo pgrx init --pg17 $(INSTALL_PREFIX)/bin/pg_config$(EXE_EXT) \
-		&& RUSTUP_TOOLCHAIN=nightly cargo pgrx install --release
-else ifeq ($(OS),Windows_NT)
-	$(error pgvectorscale build is not supported on Windows due to cargo-pgrx issues)
-else
-	$(error pgvectorscale build is not supported on musl libc distributions (e.g., Alpine) due to cargo-pgrx issues)
-endif
-
-### pgtextsearch
-PGTEXTSEARCH_TAG := v1.0.0
-PGTEXTSEARCH_URL := https://github.com/timescale/pg_textsearch/archive/refs/tags/$(PGTEXTSEARCH_TAG).tar.gz
-PGTEXTSEARCH_DIR := pgtextsearch-$(PGTEXTSEARCH_TAG)
-
-$(PGTEXTSEARCH_DIR).tar.gz:
-	curl -L -o $(PGTEXTSEARCH_DIR).tar.gz $(PGTEXTSEARCH_URL)
-
-$(PGTEXTSEARCH_DIR)/Makefile: $(PGTEXTSEARCH_DIR).tar.gz
-	mkdir -p $(PGTEXTSEARCH_DIR)
-	tar xzf $(PGTEXTSEARCH_DIR).tar.gz -C $(PGTEXTSEARCH_DIR) --strip-components=1
-	touch $(PGTEXTSEARCH_DIR)/Makefile
-
-$(INSTALL_PREFIX)/lib/pg_textsearch.so: $(PGTEXTSEARCH_DIR)/Makefile $(INSTALL_PREFIX)/bin/postgres
-ifeq ($(RUST_EXTENSIONS_SUPPORTED),1)
-	unset MAKELEVEL && unset MAKEFLAGS && unset MFLAGS \
-		&& $(MAKE) -C $(PGTEXTSEARCH_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config$(EXE_EXT) -j \
-		&& $(MAKE) -C $(PGTEXTSEARCH_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config$(EXE_EXT) install
-else ifeq ($(OS),Windows_NT)
-	$(error pgtextsearch build is not supported on Windows due to cargo-pgrx issues)
-else
-	$(error pgtextsearch build is not supported on musl libc distributions (e.g., Alpine) due to cargo-pgrx issues)
-endif
-
-### pg_search
-PGSEARCH_TAG ?= v0.21.14
-PGSEARCH_URL := https://github.com/paradedb/paradedb/archive/refs/tags/$(PGSEARCH_TAG).tar.gz
-PGSEARCH_DIR := paradedb-$(PGSEARCH_TAG)
-PGSEARCH_SUBDIR := $(PGSEARCH_DIR)/pg_search
-
-$(PGSEARCH_DIR).tar.gz:
-	curl -L -o $(PGSEARCH_DIR).tar.gz $(PGSEARCH_URL)
-
-$(PGSEARCH_SUBDIR)/Cargo.toml: $(PGSEARCH_DIR).tar.gz
-	mkdir -p $(PGSEARCH_DIR)
-	tar xzf $(PGSEARCH_DIR).tar.gz -C $(PGSEARCH_DIR) --strip-components=1
-	touch $(PGSEARCH_SUBDIR)/Cargo.toml
-
-$(INSTALL_PREFIX)/lib/pg_search.so: $(PGSEARCH_SUBDIR)/Cargo.toml $(INSTALL_PREFIX)/bin/postgres
-ifeq ($(RUST_EXTENSIONS_SUPPORTED),1)
-	unset MAKELEVEL && unset MAKEFLAGS && unset MFLAGS \
-		&& export PATH="$$HOME/.cargo/bin:$$PATH" \
-		&& cd $(PGSEARCH_SUBDIR) \
-		&& RUSTUP_TOOLCHAIN=nightly cargo pgrx init --pg17 $(INSTALL_PREFIX)/bin/pg_config$(EXE_EXT) \
-		&& RUSTUP_TOOLCHAIN=nightly cargo pgrx install --release
-else ifeq ($(OS),Windows_NT)
-	$(error pg_search build is not supported on Windows due to cargo-pgrx issues)
-else
-	$(error pg_search build is not supported on musl libc distributions (e.g., Alpine) due to cargo-pgrx issues)
-endif
-
 ### other
 .PHONY: clean clean-all
 clean:
@@ -328,14 +256,13 @@ clean:
 	rm -rf $(POSTGRES_SRC)
 	rm -rf $(POSTGRES_BLD)
 	rm -rf $(PGVECTOR_DIR)
-	rm -rf $(PGVECTORSCALE_DIR)
 	rm -rf $(PG_DUCKDB_DIR)
-	rm -rf $(PGTEXTSEARCH_DIR)
-	rm -rf $(PGSEARCH_DIR)
 	rm -rf $(VECTORCHORD_DIR)
 	rm -rf $(AGE_DIR)
 	rm -rf $(PSQL_BM25S_DIR)
 	rm -rf $(TIMESCALEDB_DIR)
+	rm -rf $(PG_CRON_DIR)
+	rm -rf $(PG_NET_DIR)
 
 clean-all: clean
 	rm -rf *.tar.gz

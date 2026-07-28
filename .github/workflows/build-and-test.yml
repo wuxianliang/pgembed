@@ -20,17 +20,17 @@ jobs:
             os: macos-latest
             arch: arm64
             deployment-target: '11.0'
-            extensions: pgvector pgvectorscale pgtextsearch pg_duckdb graph timescaledb
+            extensions: pgvector vectorchord pg_duckdb age psql_bm25s timescaledb pg_cron pg_net
           - runner: ubuntu-latest
             os: ubuntu-latest
             arch: x86_64
             deployment-target: ''
-            extensions: pgvector pgvectorscale pgtextsearch pg_duckdb graph timescaledb
+            extensions: pgvector vectorchord pg_duckdb age psql_bm25s timescaledb pg_cron pg_net
           - runner: ubuntu-24.04-arm
             os: ubuntu-latest
             arch: aarch64
             deployment-target: ''
-            extensions: pgvector pgvectorscale pgtextsearch pg_duckdb graph timescaledb
+            extensions: pgvector vectorchord pg_duckdb age psql_bm25s timescaledb pg_cron pg_net
           - runner: windows-2022
             os: windows-2022
             arch: AMD64
@@ -148,13 +148,11 @@ jobs:
             export IS_MUSL=0
             cargo install cargo-pgrx --version 0.16.1 --locked
             make
-            make EXTENSIONS=pg_search
           CIBW_BEFORE_ALL_MACOS: |
             brew install jq llvm cmake ninja lz4 openssl
             export IS_MUSL=0
             cargo install cargo-pgrx --version 0.16.1 --locked
             make
-            make EXTENSIONS=pg_search
           CIBW_BEFORE_ALL_LINUX: |
             set -e
             if command -v apk &> /dev/null; then
@@ -181,11 +179,6 @@ jobs:
               export RUSTFLAGS="-C target-feature=+avx2,+fma"
             fi
             make
-            if [ "$IS_MUSL" != "1" ]; then
-              make EXTENSIONS=pg_search
-            else
-              echo "Skipping pg_search build on musl libc"
-            fi
           CIBW_ENVIRONMENT_LINUX: PATH="$HOME/.cargo/bin:$PATH:/project/src/pgembed/pginstall/bin"
           CIBW_ENVIRONMENT_MUSLLINUX: LIBCLANG_STATIC_PATH=/usr/lib
           CIBW_ENVIRONMENT_MANYLINUX: LIBCLANG_PATH=/usr/lib64

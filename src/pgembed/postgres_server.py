@@ -370,7 +370,7 @@ class PostgresServer:
         """Create a PostgreSQL extension.
 
         Args:
-            extension_name: Name of the extension to create (e.g., 'vector', 'pg_textsearch')
+            extension_name: Name of the extension to create (e.g., 'vector', 'vchord')
 
         Returns:
             The output from the CREATE EXTENSION command.
@@ -383,16 +383,13 @@ class PostgresServer:
 
         extension_map = {
             "vector": "pgvector",
-            "vectorscale": "pgvectorscale",
-            "pg_textsearch": "pgtextsearch",
-            "pg_search": "pg_search",
             "pg_duckdb": "pg_duckdb",
             "vchord": "vectorchord",
-            "graph": "graph",
-            "pggraph": "graph",
             "age": "age",
             "psql_bm25s": "psql_bm25s",
             "timescaledb": "timescaledb",
+            "pg_cron": "pg_cron",
+            "pg_net": "pg_net",
         }
 
         pkg_name = extension_map.get(extension_name, extension_name)
@@ -401,6 +398,22 @@ class PostgresServer:
                 f"Extension '{extension_name}' is not available. "
                 f"Available extensions: {[k for k, v in AVAILABLE_EXTENSIONS.items() if v]}"
             )
+
+        # Conflict-aware ordering: some extensions collide on SQL object names
+        # (e.g. pg_duckdb & timescaledb both define public.time_bucket). The
+        # later extension's installer skips the collision only if the earlier
+        # one already exists, so create predecessors first when available.
+        for predecessor in getattr(pgembed, "EXTENSION_PRECEDENCE", {}).get(
+            pkg_name, ()
+        ):
+            if pgembed.has_extension(predecessor):
+                pred_create = get_extension_create_name(predecessor)
+                _logger.info(
+                    f"Creating extension '{pred_create}' before '{extension_name}' "
+                    f"to avoid a known SQL object-name collision."
+                )
+                self.psql(f"CREATE EXTENSION IF NOT EXISTS {pred_create};")
+
         create_name = get_extension_create_name(pkg_name)
         return self.psql(f"CREATE EXTENSION IF NOT EXISTS {create_name};")
 

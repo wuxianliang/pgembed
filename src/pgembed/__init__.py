@@ -17,48 +17,93 @@ def _get_pkg_path():
 
 EXTENSION_LIB_PATH = _get_pkg_path() / "pginstall" / "lib"
 EXTENSION_POSTGRES_LIB_PATH = EXTENSION_LIB_PATH / "postgresql"
+EXTENSION_SHARE_PATH = _get_pkg_path() / "pginstall" / "share" / "postgresql" / "extension"
 
 AVAILABLE_EXTENSIONS = {}
 
 EXTENSION_PACKAGES = {
     "pgvector": "pgembed_pgvector",
-    "pgvectorscale": "pgembed_pgvectorscale",
-    "pgtextsearch": "pgembed_pgtextsearch",
     "pg_duckdb": "pgembed_pgduckdb",
     "vectorchord": None,
-    "pggraph": None,
     "age": None,
     "psql_bm25s": None,
     "timescaledb": None,
+    "pg_cron": None,
+    "pg_net": None,
 }
 
 EXTENSION_SO_FILES = {
     "pgvector": "vector.dylib",
-    "pgvectorscale": "vectorscale-0.9.0.dylib",
-    "pgtextsearch": "pg_textsearch.dylib",
-    "pg_search": "pg_search.dylib",
     "pg_duckdb": "pg_duckdb.dylib",
-    "vectorchord": "vchord.dylib",
-    "graph": "graph.dylib",
-    "pggraph": "graph.dylib",
+    "vectorchord": ("vchord.dylib", "vchord.so", "vchord.dll"),
     "age": "age.dylib",
     "psql_bm25s": "psql_bm25s.dylib",
     "timescaledb": ("timescaledb.dylib", "timescaledb.so", "timescaledb.dll"),
+    "pg_cron": ("pg_cron.dylib", "pg_cron.so", "pg_cron.dll"),
+    "pg_net": ("pg_net.dylib", "pg_net.so", "pg_net.dll"),
+}
+
+EXTENSION_ARTIFACT_STEMS = {
+    "vectorchord": "vchord",
+}
+
+# Conflict-aware ordering: extension key -> predecessor keys that must be
+# created FIRST (when available) to avoid SQL object-name collisions.
+# pg_duckdb and timescaledb both ship public.time_bucket(...) with identical
+# signatures; pg_duckdb's installer skips its own copy only if timescaledb
+# already exists (its DO/EXCEPTION guard, upstream PR #747), so timescaledb
+# must be created before pg_duckdb.
+# See docs/investigations/pg_duckdb-timescaledb-time-bucket-collision-2026-07-28.md
+EXTENSION_PRECEDENCE = {
+    "pg_duckdb": ("timescaledb",),
 }
 
 EXTENSION_NAMES = (
     "pgvector",
-    "pgvectorscale",
-    "pgtextsearch",
-    "pg_search",
     "pg_duckdb",
     "vectorchord",
-    "graph",
-    "pggraph",
     "age",
     "psql_bm25s",
     "timescaledb",
+    "pg_cron",
+    "pg_net",
 )
+
+
+def _read_extension_default_version(stem: str) -> Optional[str]:
+    control_path = EXTENSION_SHARE_PATH / f"{stem}.control"
+    try:
+        control_text = control_path.read_text()
+    except OSError:
+        return None
+
+    for line in control_text.splitlines():
+        key, sep, value = line.strip().partition("=")
+        if sep and key.strip() == "default_version":
+            return value.strip().strip("'\"")
+    return None
+
+
+def get_extension_install_sql_path(name: str) -> Optional[Path]:
+    """Get the exact install SQL script for an extension's default_version."""
+    stem = EXTENSION_ARTIFACT_STEMS.get(name, name)
+    default_version = _read_extension_default_version(stem)
+    if not default_version:
+        return None
+    install_sql_path = EXTENSION_SHARE_PATH / f"{stem}--{default_version}.sql"
+    if install_sql_path.exists():
+        return install_sql_path
+    return None
+
+
+def _has_extension_sql_artifacts(name: str) -> bool:
+    stem = EXTENSION_ARTIFACT_STEMS.get(name)
+    if stem is None:
+        return True
+    control_path = EXTENSION_SHARE_PATH / f"{stem}.control"
+    return control_path.exists() and get_extension_install_sql_path(name) is not None
+
+
 
 
 def _detect_extensions():
@@ -84,8 +129,14 @@ def _detect_extensions():
         for so_file in so_files or ():
             bundled_path = EXTENSION_POSTGRES_LIB_PATH / so_file
             if bundled_path.exists():
-                AVAILABLE_EXTENSIONS[name] = True
-                _logger.info(f"Detected extension from bundled lib: {name}")
+                AVAILABLE_EXTENSIONS[name] = _has_extension_sql_artifacts(name)
+                if AVAILABLE_EXTENSIONS[name]:
+                    _logger.info(f"Detected extension from bundled artifacts: {name}")
+                else:
+                    _logger.warning(
+                        f"Detected bundled library for {name}, but control or SQL "
+                        f"extension artifacts are missing"
+                    )
                 detected = True
                 break
         if detected:
@@ -98,7 +149,7 @@ def has_extension(name: str) -> bool:
     """Check if a specific extension is available.
 
     Args:
-        name: Extension name (e.g., 'pgvector', 'pgvectorscale', 'pgtextsearch', 'pg_search', 'pg_duckdb')
+        name: Extension name (e.g., 'pgvector', 'pg_duckdb', 'vchord')
 
     Returns:
         True if the extension is available, False otherwise.
@@ -119,23 +170,20 @@ def get_extension_create_name(name: str) -> str:
     """Get the SQL extension creation name for an extension.
 
     Args:
-        name: Extension name (e.g., 'pgvector', 'pgtextsearch')
+        name: Extension name (e.g., 'pgvector', 'vchord')
 
     Returns:
         The SQL name to use when creating the extension.
     """
     create_names = {
         "pgvector": "vector",
-        "pgvectorscale": "vectorscale",
-        "pgtextsearch": "pg_textsearch",
-        "pg_search": "pg_search",
         "pg_duckdb": "pg_duckdb",
         "vectorchord": "vchord",
-        "graph": "graph",
-        "pggraph": "graph",
         "age": "age",
         "psql_bm25s": "psql_bm25s",
         "timescaledb": "timescaledb",
+        "pg_cron": "pg_cron",
+        "pg_net": "pg_net",
     }
     return create_names.get(name, name)
 
@@ -144,7 +192,7 @@ def get_extension_path(name: str) -> Optional[Path]:
     """Get the path to an extension .so file.
 
     Args:
-        name: Extension name (e.g., 'pgvector', 'pgtextsearch')
+        name: Extension name (e.g., 'pgvector', 'vchord')
 
     Returns:
         Path to the .so file, or None if not available.
