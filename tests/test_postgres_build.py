@@ -13,7 +13,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MAKEFILE = REPO_ROOT / "pgbuild" / "Makefile"
 PG_DUCKDB_PATCH = REPO_ROOT / "pgbuild" / "patches" / "pg_duckdb-v1.1.1-planner-hook-chain.patch"
-PG_DUCKDB_PATCH_SHA256 = "d7d452530d7fb537ae5f415d6980543f9bcf99a6f2a3f4868a4779be83b472db"
+PG_DUCKDB_PATCH_SHA256 = "e8caa2ae4b17269678da33a59ff9362f33f67a3bd870789ae3bd34b45fadee00"
 
 
 class BundleStamp:
@@ -169,6 +169,18 @@ def test_pg_duckdb_planner_patch_is_pinned_and_applied() -> None:
     assert "PG_FINALLY" in patch
     assert "-\tPlannedStmt *planned_stmt = standard_planner(query, table_scan_query, 0, nullptr);" in patch
     assert "+\tPlannedStmt *planned_stmt = PlanPostgresQuery(query, table_scan_query, 0, nullptr);" in patch
+
+    # TimescaleDB is loaded via a rendezvous that its loader deliberately skips
+    # inside parallel workers, so pg_duckdb's self-managed parallel scan must
+    # stay disabled whenever TimescaleDB is installed. Without this the leader
+    # can hang forever in ParallelFinish.
+    assert "TimescaleDBIsInstalled" in patch
+    assert 'get_extension_oid("timescaledb", true) != InvalidOid' in patch
+    assert "+\trun_scan_with_parallel_workers &= !TimescaleDBIsInstalled();" in patch
+    assert "grep -q 'TimescaleDBIsInstalled'" in makefile
+    assert (
+        "grep -q 'run_scan_with_parallel_workers &= !TimescaleDBIsInstalled();'" in makefile
+    )
 
 
 def test_all_git_sources_use_verification_markers() -> None:

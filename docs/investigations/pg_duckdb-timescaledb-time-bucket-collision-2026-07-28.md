@@ -104,3 +104,33 @@ pid   | state  | wait_event_type | wait_event     | query
 The backend is waiting for a parallel worker that never finishes. `SET max_parallel_workers_per_gather = 0` does **not** prevent it (still 1/6 hangs), because `PostgresTableReader::InitRunWithParallelScan` launches workers itself via `ExecInitParallelPlan`/`LaunchParallelWorkers`, bypassing that GUC. The plausible mechanism is that routing the scan plan through the TimescaleDB hook can now yield a plan shape whose worker teardown pg_duckdb's self-managed parallel reader does not complete; this last step is inferred from the code path, not directly observed in a worker stack trace.
 
 **Status:** the patch is a net improvement (crash → intermittent hang) and is retained, but it does **not** fully close #845/#963. Treat "pg_duckdb + TimescaleDB in one instance under `duckdb.force_execution`" as still unsafe for production; the existing guidance to use separate pgembed instances for heavy mixed workloads stands. Attempting a worker-teardown fix, or gating pg_duckdb's self-managed parallel scan when TimescaleDB is loaded, is the natural follow-up.
+
+### Phase 6 — Parallel-scan gate closes the hang (2026-08-07)
+
+**Decisive upstream evidence.** `timescaledb-2.27.1/src/loader/loader.c:746-754` returns early when loading the versioned library inside a parallel worker:
+
+```c
+/*
+ * In a parallel worker, we're not responsible for loading libraries, it's
+ * handled by the parallel worker infrastructure which restores the
+ * library state.
+ */
+if (CalledInParallelWorker())
+    return;
+```
+
+TimescaleDB therefore depends on Postgres' own parallel-worker infrastructure to restore library state. `PostgresTableReader::InitRunWithParallelScan` launches workers itself via `ExecInitParallelPlan()`/`LaunchParallelWorkers()` instead of going through a regular `Gather` node — which is also why `max_parallel_workers_per_gather = 0` had no effect — so that expectation does not hold and the leader can block indefinitely in `ParallelFinish`.
+
+Note that neither project documents a required `shared_preload_libraries` ordering. A search of both source trees (README, docs, SQL, C/C++ and comments) found only TimescaleDB's requirement that it be preloaded at all (`src/extension_utils.c:197`), never that it be listed first. The "order-dependent" behaviour recorded earlier in this document concerns `CREATE EXTENSION` ordering and the `time_bucket` collision, not library load order, and is unrelated to this hang.
+
+**Fix.** The pinned patch now also gates the self-managed parallel scan:
+
+```c
+run_scan_with_parallel_workers &= !TimescaleDBIsInstalled();
+```
+
+`TimescaleDBIsInstalled()` uses `get_extension_oid("timescaledb", true)` behind an `IsTransactionState()` guard — the same detection pg_duckdb already relies on elsewhere. Deployments without TimescaleDB keep full parallel scans; only the pg_duckdb + TimescaleDB combination falls back to a single-process scan.
+
+**Verification.** The hang probe went from 2/8 hangs to **0/12**. `test_pg_duckdb_timescaledb_planner_probe_survives` passed **8/8** in isolation (1.0s each, versus 43s on the previous timeout failures), and the full suite passed **3/3 consecutive runs at 132 tests**. A new runtime regression test, `test_pg_duckdb_parallel_scan_disabled_with_timescaledb`, pins the behaviour, and `pgbuild/Makefile` plus `tests/test_postgres_build.py` assert the gate is present so a future clean build cannot silently drop it (tamper-tested: removing the gate line fails the static test).
+
+**Status:** the crash and the hang are both closed for the tested probes. The residual cost is loss of parallel table scans for pg_duckdb when TimescaleDB is installed. This remains a local workaround pending an upstream fix; heavy mixed-engine production workloads should still prefer separate instances.

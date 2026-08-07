@@ -61,7 +61,7 @@ index e984c66..219514c 100644
  		if (pgduckdb::NeedsDuckdbExecution(parse)) {
  			pgduckdb::TriggerActivity();
 diff --git a/src/scan/postgres_table_reader.cpp b/src/scan/postgres_table_reader.cpp
-index 314145b..6c069b0 100644
+index 314145b..6a2f282 100644
 --- a/src/scan/postgres_table_reader.cpp
 +++ b/src/scan/postgres_table_reader.cpp
 @@ -1,4 +1,5 @@
@@ -70,7 +70,44 @@ index 314145b..6c069b0 100644
  #include "pgduckdb/pgduckdb_process_lock.hpp"
  #include "pgduckdb/pgduckdb_utils.hpp"
  #include "pgduckdb/pgduckdb_guc.hpp"
-@@ -63,7 +64,7 @@ PostgresTableReader::InitUnsafe(const char *table_scan_query, bool count_tuples_
+@@ -22,6 +23,7 @@ extern "C" {
+ #include "utils/rel.h"
+ #include "utils/snapmgr.h"
+ #include "utils/wait_event.h"
++#include "commands/extension.h"
+ }
+ 
+ #include "pgduckdb/vendor/pg_list.hpp"
+@@ -30,6 +32,28 @@ extern "C" {
+ 
+ namespace pgduckdb {
+ 
++/*
++ * pgembed: TimescaleDB's loader deliberately does not load its versioned
++ * library inside a parallel worker (see timescaledb src/loader/loader.c,
++ * CalledInParallelWorker()); it relies on Postgres' own parallel-worker
++ * infrastructure to restore library state. PostgresTableReader launches
++ * workers itself via ExecInitParallelPlan()/LaunchParallelWorkers() rather
++ * than through a regular Gather node, so that expectation does not hold and
++ * the leader can block forever in ParallelFinish waiting on a worker that
++ * never completes.
++ *
++ * Until that is fixed upstream, fall back to a single-process scan whenever
++ * TimescaleDB is installed. This costs parallelism only for the pg_duckdb +
++ * TimescaleDB combination and leaves pg_duckdb-only deployments untouched.
++ */
++static bool
++TimescaleDBIsInstalled() {
++	if (!IsTransactionState()) {
++		return false;
++	}
++	return get_extension_oid("timescaledb", true) != InvalidOid;
++}
++
+ PostgresTableReader::PostgresTableReader()
+     : table_scan_query_desc(nullptr), table_scan_planstate(nullptr), parallel_executor_info(nullptr),
+       parallel_worker_readers(nullptr), slot(nullptr), nworkers_launched(0), nreaders(0), next_parallel_reader(0),
+@@ -63,7 +87,7 @@ PostgresTableReader::InitUnsafe(const char *table_scan_query, bool count_tuples_
  
  	char persistence = get_rel_persistence(rte->relid);
  
@@ -79,3 +116,11 @@ index 314145b..6c069b0 100644
  
  	table_scan_query_desc = CreateQueryDesc(planned_stmt, table_scan_query, GetActiveSnapshot(), InvalidSnapshot,
  	                                        None_Receiver, nullptr, nullptr, 0);
+@@ -74,6 +98,7 @@ PostgresTableReader::InitUnsafe(const char *table_scan_query, bool count_tuples_
+ 
+ 	bool run_scan_with_parallel_workers = persistence != RELPERSISTENCE_TEMP;
+ 	run_scan_with_parallel_workers &= CanTableScanRunInParallel(table_scan_query_desc->planstate->plan);
++	run_scan_with_parallel_workers &= !TimescaleDBIsInstalled();
+ 
+ 	/* Temp tables cannot be excuted with parallel workers, and whole plan should be parallel aware */
+ 	if (run_scan_with_parallel_workers) {

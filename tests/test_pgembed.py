@@ -980,6 +980,63 @@ def test_pg_duckdb_then_timescaledb_records_known_collision(tmp_path: Path):
         assert _psql_tuples(pg, "SELECT 1;") == [(1,)]
 
 
+def test_pg_duckdb_parallel_scan_disabled_with_timescaledb(tmp_path: Path):
+    """pg_duckdb must not run its self-managed parallel scan when TimescaleDB is present.
+
+    TimescaleDB's loader returns early inside a parallel worker and relies on
+    Postgres' parallel-worker infrastructure to restore library state. pg_duckdb
+    launches workers itself via ExecInitParallelPlan()/LaunchParallelWorkers()
+    rather than through a Gather node, so that expectation does not hold and the
+    leader could block forever in ParallelFinish. The bundled patch disables the
+    parallel path whenever TimescaleDB is installed; this asserts the query
+    completes well inside the old 30s hang window.
+    """
+    _require_full_release_metadata()
+    with pgembed.get_server(
+        tmp_path / "duckdb-parallel-gate",
+        cleanup_mode="delete",
+        shared_preload_libraries=("timescaledb", "pg_duckdb"),
+    ) as pg:
+        pg.create_extension("pg_duckdb")
+        pg.psql(
+            """
+            CREATE TABLE parallel_gate_ts (
+              observed_at timestamptz NOT NULL,
+              value integer NOT NULL
+            );
+            SELECT create_hypertable('parallel_gate_ts', 'observed_at');
+            INSERT INTO parallel_gate_ts VALUES
+              ('2026-08-07 00:00:00+00', 1),
+              ('2026-08-07 00:01:00+00', 2);
+            SELECT time_bucket(INTERVAL '1 minute', observed_at), sum(value)
+              FROM parallel_gate_ts GROUP BY 1 ORDER BY 1;
+            """
+        )
+
+        # This is the sequence that hung in ParallelFinish before the gate.
+        result = subprocess.run(
+            [
+                str(pgembed.POSTGRES_BIN_PATH / "psql"),
+                "--no-psqlrc",
+                "--set=ON_ERROR_STOP=1",
+                pg.get_uri(),
+            ],
+            input="""
+            CREATE TABLE public.parallel_gate (id integer PRIMARY KEY, value double precision);
+            INSERT INTO public.parallel_gate VALUES (1, 1.0), (2, 2.0);
+            SET duckdb.force_execution = true;
+            SELECT count(*) FROM public.parallel_gate;
+            RESET duckdb.force_execution;
+            """,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=20,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert _psql_tuples(pg, "SELECT 1;") == [(1,)]
+
+
 def test_pg_duckdb_timescaledb_planner_probe_survives(tmp_path: Path):
     _require_full_release_metadata()
     with pgembed.get_server(

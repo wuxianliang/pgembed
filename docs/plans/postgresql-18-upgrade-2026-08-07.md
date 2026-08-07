@@ -14,7 +14,9 @@
 
 构建过程中记录到两项与配方无关的环境问题，均不需要修改已锁定的源码或 recipe：AGE clone 曾因网络吞吐跌破 1000 B/s 触发 `Error 128`，重试即通过；构建中断会因 completion marker 缺失触发既定的 whole-prefix invalidation，同一次 make 运行内的陈旧路径缓存会导致紧随其后的子 make 失败，重新发起一次构建即可干净重建。
 
-已知未关闭缺陷：`pgbuild/patches/pg_duckdb-v1.1.1-planner-hook-chain.patch` 消除了 #845/#963 的 segfault，但把它转成了 **intermittent hang**。timescaledb 与 pg_duckdb 同时 preload、且已执行过 hypertable + `time_bucket` 查询后，`SET duckdb.force_execution = true` 下的 `SELECT count(*)` 有约 25%（2/8 隔离运行）概率挂起；`pg_stat_activity` 显示 backend 阻塞在 `IPC / ParallelFinish`，等待一个永不返回的 parallel worker，且不受 `max_parallel_workers_per_gather=0` 约束（pg_duckdb 的 `InitRunWithParallelScan` 自行启动 worker）。因此 `tests/test_pgembed.py::test_pg_duckdb_timescaledb_planner_probe_survives` 在全量运行中会间歇性因 30s psql timeout 失败（3 次全量运行中 1 次）。WI-10 的 "planner survival" 判据尚未真正满足，详见 `docs/investigations/pg_duckdb-timescaledb-time-bucket-collision-2026-07-28.md` Phase 5。
+pg_duckdb ↔ TimescaleDB 共存缺陷已闭环。`pgbuild/patches/pg_duckdb-v1.1.1-planner-hook-chain.patch` 先经完整 planner hook chain 修掉 #845/#963 的 segfault，该修复又暴露出 `IPC / ParallelFinish` 挂起（隔离运行 2/8 约 25%）。根因是 TimescaleDB loader 在 parallel worker 中提前 return、依赖 Postgres 自身的 parallel-worker 基础设施恢复 library state（`src/loader/loader.c:746-754`），而 pg_duckdb 的 `InitRunWithParallelScan` 自行调用 `ExecInitParallelPlan()`/`LaunchParallelWorkers()`，绕过该前提——这也解释了为何 `max_parallel_workers_per_gather=0` 无效。补丁现追加 `run_scan_with_parallel_workers &= !TimescaleDBIsInstalled();`，仅在 TimescaleDB 已安装时回退为单进程扫描。验证：挂起探针 0/12，`test_pg_duckdb_timescaledb_planner_probe_survives` 隔离 8/8（每次 1.0s，此前失败为 43s），全量套件连续 3 次 132 passed。新增运行时回归测试 `test_pg_duckdb_parallel_scan_disabled_with_timescaledb`，并由 `pgbuild/Makefile` 与 `tests/test_postgres_build.py` 断言该 gate 存在（已用篡改测试验证可拦截）。代价是 TimescaleDB 在场时 pg_duckdb 失去并行扫描；这是本地 workaround，上游修复前重度混合负载仍建议分实例。详见调查文档 Phase 5–6。
+
+需要说明：双方源码与文档均未规定 `shared_preload_libraries` 的先后顺序，TimescaleDB 只要求自身被 preload（`src/extension_utils.c:197`）。调查文档中原有的 "order-dependent" 说法指的是 `CREATE EXTENSION` 顺序与 `time_bucket` 命名冲突，与本挂起无关。
 
 发布验收仍须由 CI 完成以下 gates，全部通过后本计划的“Done when”才算满足：
 

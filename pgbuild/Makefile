@@ -63,7 +63,7 @@ PG_DUCKDB_DUCKDB_COMMIT := d1dc88f950d456d72493df452dabdcd13aa413dd
 PG_DUCKDB_REPO := https://github.com/duckdb/pg_duckdb
 PG_DUCKDB_DIR := pg_duckdb-$(PG_DUCKDB_TAG)
 PG_DUCKDB_PATCH := patches/pg_duckdb-v1.1.1-planner-hook-chain.patch
-PG_DUCKDB_PATCH_SHA256 := d7d452530d7fb537ae5f415d6980543f9bcf99a6f2a3f4868a4779be83b472db
+PG_DUCKDB_PATCH_SHA256 := e8caa2ae4b17269678da33a59ff9362f33f67a3bd870789ae3bd34b45fadee00
 PG_DUCKDB_SOURCE_VERIFIED := $(PG_DUCKDB_DIR)/.pgembed-source-verified
 PG_DUCKDB_GEN ?= $(shell if command -v ninja >/dev/null 2>&1; then echo ninja; else echo make; fi)
 PG_DUCKDB_LZ4_PREFIX ?= $(shell if [ -d /opt/homebrew/opt/lz4 ]; then echo /opt/homebrew/opt/lz4; elif [ -d /usr/local/opt/lz4 ]; then echo /usr/local/opt/lz4; fi)
@@ -243,6 +243,8 @@ $(PG_DUCKDB_SOURCE_VERIFIED): $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PG_DUCKDB_PATCH)
 	grep -q 'PG_FINALLY' "$(PG_DUCKDB_DIR)/src/pgduckdb_hooks.cpp"; \
 	grep -q 'PlanPostgresQuery(query, table_scan_query' "$(PG_DUCKDB_DIR)/src/scan/postgres_table_reader.cpp"; \
 	! grep -q 'standard_planner(query, table_scan_query' "$(PG_DUCKDB_DIR)/src/scan/postgres_table_reader.cpp"; \
+	grep -q 'TimescaleDBIsInstalled' "$(PG_DUCKDB_DIR)/src/scan/postgres_table_reader.cpp"; \
+	grep -q 'run_scan_with_parallel_workers &= !TimescaleDBIsInstalled();' "$(PG_DUCKDB_DIR)/src/scan/postgres_table_reader.cpp"; \
 	touch "$@"
 
 $(INSTALL_PREFIX)/lib/postgresql/pg_duckdb.$(PG_DLSUFFIX): $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PG_DUCKDB_SOURCE_VERIFIED) $(INSTALL_PREFIX)/bin/postgres
