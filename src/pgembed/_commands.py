@@ -31,6 +31,15 @@ if not _postgres_binaries_available:
 
 _logger = logging.getLogger("pgembed")
 
+_AUTO_WRAP_EXCLUSIONS = {"tigerfs"}
+
+
+def _normalize_executable_name(name: str) -> str:
+    """Remove only an exact terminal .exe suffix from an executable name."""
+    if name.lower().endswith(".exe"):
+        return name[:-4]
+    return name
+
 
 def create_command_function(pg_exe_name: str) -> Callable:
     def command(args: List[str], pgdata: Optional[Path] = None, **kwargs) -> str:
@@ -46,7 +55,7 @@ def create_command_function(pg_exe_name: str) -> Callable:
         Returns:
             The stdout of the command as a string.
         """
-        if pg_exe_name.strip(".exe") in ["initdb", "pg_ctl", "pg_dump"]:
+        if _normalize_executable_name(pg_exe_name) in ["initdb", "pg_ctl", "pg_dump"]:
             assert (
                 pgdata is not None
             ), "pgdata must be provided for initdb, pg_ctl, and pg_dump"
@@ -116,9 +125,10 @@ def _init():
         return
     for path in POSTGRES_BIN_PATH.iterdir():
         exe_name = path.name
+        function_name = _normalize_executable_name(exe_name)
+        if function_name in _AUTO_WRAP_EXCLUSIONS:
+            continue
         prog = create_command_function(exe_name)
-        # Strip .exe suffix for Windows compatibility
-        function_name = exe_name.strip(".exe")
         setattr(sys.modules[__name__], function_name, prog)
         __all__.append(function_name)
 

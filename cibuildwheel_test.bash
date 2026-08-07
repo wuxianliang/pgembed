@@ -1,13 +1,11 @@
-#! /bin/bash
-PROJECT=$1
+#!/bin/bash
+set -euo pipefail
 
-echo "Running on OSTYPE=$OSTYPE with UID=$UID"
+PROJECT=${1:?"project path is required"}
 
-case "$OSTYPE" in
-    linux*)
-        echo "Tests disabled on the manylinux docker container for now"
-        ;;
-    *)
-        pytest -s -v --log-cli-level=INFO $PROJECT/tests
-        ;;
-esac
+echo "Running installed-wheel smoke on OSTYPE=$OSTYPE with UID=$UID"
+
+# Gate 2 is intentionally limited to installed-wheel binary/metadata/API smoke
+# for every CPython wheel. Native lifecycle/extension integration and the real
+# TigerFS mount run later on dedicated runners with the cp312 wheel.
+pytest -s -v --log-cli-level=INFO "$PROJECT/tests/test_bundled_tools.py"

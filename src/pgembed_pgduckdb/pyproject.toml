@@ -1,10 +1,10 @@
 [project]
 name = "pgembed-pgduckdb"
-version = "0.2.0"
+version = "0.3.0rc1"
 description = "pg_duckdb extension for pgembed"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["pgembed>=0.2.0"]
+dependencies = ["pgembed>=0.3.0rc1,<0.4"]
 
 [project.optional-dependencies]
 test = ["pytest"]

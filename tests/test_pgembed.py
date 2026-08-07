@@ -16,6 +16,12 @@ import datetime
 from sqlalchemy_utils import database_exists, create_database
 import logging
 import os
+import time
+
+from pgembed._bundle_metadata import require_bundle_metadata
+
+pytestmark = pytest.mark.integration
+
 
 def _check_sqlalchemy_works(srv : pgembed.PostgresServer):
     database_name = 'testdb'
@@ -163,7 +169,10 @@ def tmp_postgres_timescaledb():
         yield pg
 
 
-def _check_server(pg : pgembed.PostgresServer) -> int:
+def _check_server(
+    pg: pgembed.PostgresServer,
+    expected_preload_libraries: Optional[tuple[str, ...]] = None,
+) -> int:
     assert pg.pgdata.exists()
     postmaster_info = pgembed.utils.PostmasterInfo.read_from_pgdata(pg.pgdata)
     assert postmaster_info is not None
@@ -174,7 +183,12 @@ def _check_server(pg : pgembed.PostgresServer) -> int:
     # parse second row (first two are headers)
     ret_path = Path(ret.splitlines()[2].strip())
     assert pg.pgdata == ret_path
-    _check_no_default_age_preload(pg)
+    if expected_preload_libraries is None:
+        _check_no_default_age_preload(pg)
+    else:
+        configured = pg.psql("show shared_preload_libraries;").splitlines()[2].strip()
+        actual = tuple(item.strip() for item in configured.split(",") if item.strip())
+        assert actual == expected_preload_libraries
     _check_sqlalchemy_works(pg)
     return postmaster_info.pid
 
@@ -273,13 +287,14 @@ def test_unix_domain_socket():
             try:
                 with pgembed.get_server(tmpdir) as pg:
                     pid = _check_server(pg)
+                    uri = pg.get_uri()
 
                 assert not process_is_running(pid)
                 assert pg.pgdata.exists()
                 if len(prefix) > 120:
-                    assert str(tmpdir) not in pg.get_uri()
+                    assert str(tmpdir) not in uri
                 else:
-                    assert str(tmpdir) in pg.get_uri()
+                    assert str(tmpdir) in uri
             finally:
                 _kill_server(pid)
 
@@ -542,9 +557,8 @@ def test_timescaledb_preload(tmp_postgres_timescaledb):
     assert 'timescale_smoke' in hypertable_output
 
 
-def test_start_failure_log(caplog):
-    """ Test server log contents are shown in python log when failures
-    """
+def test_start_failure_includes_log_tail():
+    """Structured startup failures include the PostgreSQL log tail."""
     with tempfile.TemporaryDirectory() as tmpdir:
         with pgembed.get_server(tmpdir) as _:
             pass
@@ -553,11 +567,11 @@ def test_start_failure_log(caplog):
         for f in Path(tmpdir).glob('**/postgresql.conf'):
             f.unlink()
 
-        with pytest.raises(subprocess.CalledProcessError):
+        with pytest.raises(pgembed.PostgresStartupError) as exc_info:
             with pgembed.get_server(tmpdir) as _:
                 pass
 
-        assert 'postgres: could not access the server configuration file' in caplog.text
+        assert 'postgres: could not access the server configuration file' in str(exc_info.value)
 
 
 def test_no_conflict():
@@ -678,3 +692,365 @@ def test_multiprocess_shared():
             assert not process_is_running(server_pid_parent)
     finally:
         _kill_server(pid)
+
+
+RELEASE_EXTENSION_ORDER = (
+    "pgvector",
+    "vectorchord",
+    "age",
+    "psql_bm25s",
+    "timescaledb",
+    "pg_duckdb",
+    "pg_cron",
+    "pg_net",
+)
+RELEASE_PRELOAD_PACKAGES = (
+    "vectorchord",
+    "timescaledb",
+    "pg_duckdb",
+    "pg_cron",
+    "pg_net",
+)
+RELEASE_PRELOAD_NAMES = (
+    "vchord",
+    "timescaledb",
+    "pg_duckdb",
+    "pg_cron",
+    "pg_net",
+)
+
+
+def _require_full_release_metadata():
+    metadata = require_bundle_metadata()
+    assert metadata.postgres_major == 18
+    assert set(metadata.extensions) == set(RELEASE_EXTENSION_ORDER)
+    for name in RELEASE_EXTENSION_ORDER:
+        extension = metadata.extensions[name]
+        assert extension.requested, f"release extension was not requested: {name}"
+        assert extension.built, f"release extension was not built: {name}"
+        assert not extension.skipped, f"release extension was skipped: {name}"
+        assert extension.built_for_postgres_major == 18
+        assert pgembed.has_extension(name), f"runtime did not attest release extension: {name}"
+    preload_names = tuple(
+        metadata.extensions[name].preload_name for name in RELEASE_PRELOAD_PACKAGES
+    )
+    assert preload_names == RELEASE_PRELOAD_NAMES
+    assert all(metadata.extensions[name].requires_preload for name in RELEASE_PRELOAD_PACKAGES)
+    return metadata
+
+
+def _create_release_extension_catalog(pg: pgembed.PostgresServer) -> set[str]:
+    metadata = _require_full_release_metadata()
+    for name in RELEASE_EXTENSION_ORDER:
+        pg.create_extension(name)
+    expected = {metadata.extensions[name].create_name for name in RELEASE_EXTENSION_ORDER}
+    catalog_rows = _psql_tuples(
+        pg,
+        "SELECT e.extname, e.extversion, a.default_version "
+        "FROM pg_extension e "
+        "JOIN pg_available_extensions a ON a.name = e.extname "
+        "WHERE e.extname <> 'plpgsql' ORDER BY e.extname;",
+    )
+    actual = {row[0] for row in catalog_rows}
+    assert actual == expected
+    assert all(installed_version == default_version for _, installed_version, default_version in catalog_rows)
+    access_methods = {
+        row[0]
+        for row in _psql_tuples(
+            pg,
+            "SELECT amname FROM pg_am "
+            "WHERE amname IN ('hnsw', 'ivfflat', 'vchordg', 'vchordrq', 'psql_bm25s');",
+        )
+    }
+    assert access_methods == {"hnsw", "ivfflat", "vchordg", "vchordrq", "psql_bm25s"}
+    return expected
+
+
+def _assert_preload_order(pg: pgembed.PostgresServer) -> None:
+    configured = _psql_tuples(pg, "SHOW shared_preload_libraries;")[0][0]
+    assert tuple(item.strip() for item in configured.split(",") if item.strip()) == RELEASE_PRELOAD_NAMES
+
+
+def test_missing_preload_library_returns_structured_startup_error(tmp_path: Path):
+    started = time.monotonic()
+    with pytest.raises(pgembed.PostgresStartupError) as exc_info:
+        pgembed.get_server(
+            tmp_path / "invalid-preload",
+            cleanup_mode="delete",
+            shared_preload_libraries="pgembed_library_that_does_not_exist",
+        )
+    assert time.monotonic() - started < 45
+    assert "pgembed_library_that_does_not_exist" in str(exc_info.value)
+    postmaster = pgembed.utils.PostmasterInfo.read_from_pgdata(tmp_path / "invalid-preload")
+    assert postmaster is None or not postmaster.is_running()
+
+
+def test_all_preload_extensions_restart(tmp_path: Path):
+    _require_full_release_metadata()
+    pgdata = tmp_path / "full-release-restart"
+
+    with pgembed.get_server(
+        pgdata,
+        cleanup_mode="stop",
+        shared_preload_libraries=RELEASE_PRELOAD_NAMES,
+    ) as pg:
+        first_pid = _check_server(pg, RELEASE_PRELOAD_NAMES)
+        _assert_preload_order(pg)
+        expected_catalog = _create_release_extension_catalog(pg)
+        server_version_num = int(_psql_tuples(pg, "SHOW server_version_num;")[0][0])
+        assert 180000 <= server_version_num < 190000
+
+        pg.psql(
+            """
+            DROP TABLE IF EXISTS pg18_vector_restart;
+            CREATE TABLE pg18_vector_restart (id integer PRIMARY KEY, emb vector(3));
+            INSERT INTO pg18_vector_restart VALUES
+              (1, '[1,0,0]'), (2, '[0,1,0]'), (3, '[0,0,1]'),
+              (4, '[0.9,0.1,0]'), (5, '[0.1,0.9,0]'), (6, '[0,0.1,0.9]');
+            CREATE INDEX pg18_vector_hnsw_idx
+              ON pg18_vector_restart USING hnsw (emb vector_l2_ops);
+            """
+        )
+        hnsw_plan = pg.psql(
+            "SET enable_seqscan TO off; EXPLAIN (COSTS OFF) "
+            "SELECT id FROM pg18_vector_restart ORDER BY emb <-> '[1,0,0]' LIMIT 3;"
+        )
+        assert "Index Scan using pg18_vector_hnsw_idx" in hnsw_plan
+        pg.psql(
+            """
+            DROP INDEX pg18_vector_hnsw_idx;
+            CREATE INDEX pg18_vector_ivfflat_idx
+              ON pg18_vector_restart USING ivfflat (emb vector_l2_ops) WITH (lists = 1);
+            ANALYZE pg18_vector_restart;
+            """
+        )
+        ivfflat_plan = pg.psql(
+            "SET enable_seqscan TO off; EXPLAIN (COSTS OFF) "
+            "SELECT id FROM pg18_vector_restart ORDER BY emb <-> '[1,0,0]' LIMIT 3;"
+        )
+        assert "Index Scan using pg18_vector_ivfflat_idx" in ivfflat_plan
+
+        pg.psql(
+            """
+            DROP TABLE IF EXISTS pg18_bm25_restart;
+            CREATE TABLE pg18_bm25_restart (id integer, body text);
+            INSERT INTO pg18_bm25_restart VALUES
+              (1, 'hello vector search'),
+              (2, 'postgres bm25 search'),
+              (3, 'graph query age');
+            CREATE INDEX pg18_bm25_restart_idx
+              ON pg18_bm25_restart USING psql_bm25s (body);
+            """
+        )
+        pg.psql(
+            """
+            DROP TABLE IF EXISTS pg18_timescale_restart;
+            CREATE TABLE pg18_timescale_restart (
+              observed_at timestamptz NOT NULL,
+              value double precision
+            );
+            SELECT create_hypertable('pg18_timescale_restart', 'observed_at');
+            INSERT INTO pg18_timescale_restart VALUES
+              ('2026-08-07 00:00:00+00', 1.0),
+              ('2026-08-07 00:01:00+00', 2.0);
+            """
+        )
+        pg.psql(
+            "LOAD 'age'; SET search_path = ag_catalog, \"$user\", public; "
+            "SELECT create_graph('pg18_restart_graph');"
+        )
+        assert _psql_tuples(
+            pg,
+            "SELECT duckdb.time_bucket(INTERVAL '1 day', DATE '2026-08-07') "
+            "= DATE '2026-08-07';",
+        ) == [(True,)]
+        assert _psql_tuples(pg, "SELECT to_regnamespace('net') IS NOT NULL;")[0][0]
+        cron_job_id = _psql_tuples(
+            pg,
+            "SELECT cron.schedule('pgembed_pg18_restart', '* * * * *', 'SELECT 1');",
+        )[0][0]
+        assert isinstance(cron_job_id, int)
+
+    assert not process_is_running(first_pid)
+
+    with pgembed.get_server(
+        pgdata,
+        cleanup_mode="delete",
+        shared_preload_libraries=RELEASE_PRELOAD_NAMES,
+    ) as pg:
+        second_pid = _check_server(pg, RELEASE_PRELOAD_NAMES)
+        assert second_pid != first_pid
+        _assert_preload_order(pg)
+        actual_catalog = {
+            row[0]
+            for row in _psql_tuples(
+                pg,
+                "SELECT extname FROM pg_extension WHERE extname <> 'plpgsql' ORDER BY extname;",
+            )
+        }
+        assert actual_catalog == expected_catalog
+        assert _psql_tuples(
+            pg,
+            "SELECT id FROM pg18_vector_restart ORDER BY emb <-> '[1,0,0]' LIMIT 3;",
+        ) == [(1,), (4,), (5,)]
+        assert len(
+            _psql_tuples(
+                pg,
+                "SELECT doc_id, score FROM "
+                "psql_bm25s_query('pg18_bm25_restart_idx', 'search', 2);",
+            )
+        ) == 2
+        assert _psql_tuples(
+            pg,
+            "SELECT count(*), sum(value) FROM pg18_timescale_restart "
+            "WHERE time_bucket(INTERVAL '1 minute', observed_at) IS NOT NULL;",
+        ) == [(2, 3.0)]
+        assert _psql_tuples(
+            pg,
+            "SELECT count(*) > 0 FROM pg_indexes "
+            "WHERE tablename = 'pg18_timescale_restart';",
+        ) == [(True,)]
+        assert _psql_tuples(
+            pg,
+            "SELECT EXISTS (SELECT 1 FROM ag_catalog.ag_graph "
+            "WHERE name = 'pg18_restart_graph');",
+        ) == [(True,)]
+        assert _psql_tuples(
+            pg,
+            "SELECT count(*) FROM cron.job WHERE jobname = 'pgembed_pg18_restart';",
+        ) == [(1,)]
+        assert _psql_tuples(pg, f"SELECT cron.unschedule({cron_job_id});") == [(True,)]
+        assert _psql_tuples(pg, "SELECT to_regnamespace('net') IS NOT NULL;") == [(True,)]
+        assert _psql_tuples(pg, "SELECT 1;") == [(1,)]
+
+        preload_lines = [
+            line
+            for line in (pgdata / "postgresql.conf").read_text().splitlines()
+            if line.strip().startswith("shared_preload_libraries")
+        ]
+        assert len(preload_lines) == 1
+        for library in RELEASE_PRELOAD_NAMES:
+            assert preload_lines[0].split("=", 1)[1].count(library) == 1
+
+
+def test_pg_duckdb_creates_timescaledb_first_on_pg18(tmp_path: Path):
+    _require_full_release_metadata()
+    with pgembed.get_server(
+        tmp_path / "duckdb-order",
+        cleanup_mode="delete",
+        shared_preload_libraries=("timescaledb", "pg_duckdb"),
+    ) as pg:
+        pg.create_extension("pg_duckdb")
+        assert {
+            row[0]
+            for row in _psql_tuples(
+                pg,
+                "SELECT extname FROM pg_extension "
+                "WHERE extname IN ('timescaledb', 'pg_duckdb') ORDER BY 1;",
+            )
+        } == {"timescaledb", "pg_duckdb"}
+        assert _psql_tuples(
+            pg,
+            "SELECT count(*) > 0 FROM pg_proc p "
+            "JOIN pg_namespace n ON n.oid = p.pronamespace "
+            "JOIN pg_depend d ON d.objid = p.oid AND d.deptype = 'e' "
+            "JOIN pg_extension e ON e.oid = d.refobjid "
+            "WHERE n.nspname = 'public' AND p.proname = 'time_bucket' "
+            "AND e.extname = 'timescaledb';",
+        ) == [(True,)]
+        assert _psql_tuples(
+            pg,
+            "SELECT EXISTS (SELECT 1 FROM pg_proc p "
+            "JOIN pg_namespace n ON n.oid = p.pronamespace "
+            "WHERE n.nspname = 'duckdb' AND p.proname = 'time_bucket');",
+        ) == [(True,)]
+        assert _psql_tuples(pg, "SELECT 1;") == [(1,)]
+
+
+def test_pg_duckdb_then_timescaledb_records_known_collision(tmp_path: Path):
+    _require_full_release_metadata()
+    with pgembed.get_server(
+        tmp_path / "duckdb-reverse-order",
+        cleanup_mode="delete",
+        shared_preload_libraries=("timescaledb", "pg_duckdb"),
+    ) as pg:
+        pg.psql("CREATE EXTENSION pg_duckdb;")
+        with pytest.raises(subprocess.CalledProcessError):
+            pg.psql("CREATE EXTENSION timescaledb;")
+        assert _psql_tuples(pg, "SELECT 1;") == [(1,)]
+
+
+def test_pg_duckdb_timescaledb_planner_probe_survives(tmp_path: Path):
+    _require_full_release_metadata()
+    with pgembed.get_server(
+        tmp_path / "duckdb-planner-probe",
+        cleanup_mode="delete",
+        shared_preload_libraries=("timescaledb", "pg_duckdb"),
+    ) as pg:
+        pg.create_extension("pg_duckdb")
+        pg.psql(
+            """
+            CREATE TABLE planner_probe (
+              observed_at timestamptz NOT NULL,
+              value integer NOT NULL
+            );
+            SELECT create_hypertable('planner_probe', 'observed_at');
+            INSERT INTO planner_probe VALUES
+              ('2026-08-07 00:00:00+00', 1),
+              ('2026-08-07 00:01:00+00', 2),
+              ('2026-08-07 00:02:00+00', 3);
+            SELECT time_bucket(INTERVAL '1 minute', observed_at), sum(value)
+              FROM planner_probe GROUP BY 1 ORDER BY 1;
+            """
+        )
+        postmaster = pgembed.utils.PostmasterInfo.read_from_pgdata(pg.pgdata)
+        assert postmaster is not None and postmaster.is_running()
+
+        probe_sql = """
+        CREATE TABLE public.pgduckdb_issue_963 (
+          id integer PRIMARY KEY,
+          value double precision
+        );
+        INSERT INTO public.pgduckdb_issue_963 VALUES (1, 1.0);
+        SET duckdb.force_execution = true;
+        SELECT count(*) FROM public.pgduckdb_issue_963;
+        RESET duckdb.force_execution;
+
+        CREATE OR REPLACE FUNCTION public.pgduckdb_issue_845_probe()
+        RETURNS void LANGUAGE plpgsql AS $$
+        BEGIN
+          EXECUTE 'DROP TABLE IF EXISTS pgduckdb_issue_845_tmp';
+          EXECUTE 'CREATE TEMP TABLE pgduckdb_issue_845_tmp AS SELECT 1 AS x';
+          EXECUTE 'SELECT count(*) FROM pgduckdb_issue_845_tmp';
+        END;
+        $$;
+        SELECT public.pgduckdb_issue_845_probe();
+        DROP FUNCTION public.pgduckdb_issue_845_probe();
+        """
+        result = subprocess.run(
+            [
+                str(pgembed.POSTGRES_BIN_PATH / "psql"),
+                "--no-psqlrc",
+                "--set=ON_ERROR_STOP=1",
+                pg.get_uri(),
+            ],
+            input=probe_sql,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        output = result.stdout + result.stderr
+        crash_markers = (
+            "server closed the connection unexpectedly",
+            "connection to server was lost",
+            "terminated by signal",
+            "Segmentation fault",
+        )
+        assert not any(marker.lower() in output.lower() for marker in crash_markers), output
+
+        # A normal SQL-level incompatibility may still return non-zero, but neither
+        # upstream probe may kill the connection or the postmaster.
+        postmaster = pgembed.utils.PostmasterInfo.read_from_pgdata(pg.pgdata)
+        assert postmaster is not None and postmaster.is_running()
+        assert _psql_tuples(pg, "SELECT 1;") == [(1,)]

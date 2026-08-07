@@ -133,10 +133,16 @@ dmypy.json
 .idea
 
 build/
-pgbuild/
+pgbuild/*
+!pgbuild/Makefile
+!pgbuild/patches/
+!pgbuild/patches/*.patch
 src/pgembed/pginstall
 
 # macOS / stray tooling artifacts (never commit)
 .DS_Store
 /:runner_exit_code_file
 /:
+
+# Local agent/oracle session exports (not project deliverables)
+prompt-exports/
