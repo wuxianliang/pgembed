@@ -14,6 +14,8 @@
 
 构建过程中记录到两项与配方无关的环境问题，均不需要修改已锁定的源码或 recipe：AGE clone 曾因网络吞吐跌破 1000 B/s 触发 `Error 128`，重试即通过；构建中断会因 completion marker 缺失触发既定的 whole-prefix invalidation，同一次 make 运行内的陈旧路径缓存会导致紧随其后的子 make 失败，重新发起一次构建即可干净重建。
 
+已知未关闭缺陷：`pgbuild/patches/pg_duckdb-v1.1.1-planner-hook-chain.patch` 消除了 #845/#963 的 segfault，但把它转成了 **intermittent hang**。timescaledb 与 pg_duckdb 同时 preload、且已执行过 hypertable + `time_bucket` 查询后，`SET duckdb.force_execution = true` 下的 `SELECT count(*)` 有约 25%（2/8 隔离运行）概率挂起；`pg_stat_activity` 显示 backend 阻塞在 `IPC / ParallelFinish`，等待一个永不返回的 parallel worker，且不受 `max_parallel_workers_per_gather=0` 约束（pg_duckdb 的 `InitRunWithParallelScan` 自行启动 worker）。因此 `tests/test_pgembed.py::test_pg_duckdb_timescaledb_planner_probe_survives` 在全量运行中会间歇性因 30s psql timeout 失败（3 次全量运行中 1 次）。WI-10 的 "planner survival" 判据尚未真正满足，详见 `docs/investigations/pg_duckdb-timescaledb-time-bucket-collision-2026-07-28.md` Phase 5。
+
 发布验收仍须由 CI 完成以下 gates，全部通过后本计划的“Done when”才算满足：
 
 - 三平台 PostgreSQL 18.4 clean native build、bundle metadata/artifact audit 与 repaired-wheel dependency audit（macOS arm64 native build 已在本机通过，仍需 CI 无 cache 复现，Linux x86_64 与 Linux aarch64 未验证）；

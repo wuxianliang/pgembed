@@ -78,3 +78,29 @@ Two independent issues, only the first is what the user observed:
 
 ### Phase 4 — Oracle synthesis
 Oracle backend unavailable (503 model_not_found); synthesis performed by the orchestrating agent from the verified evidence above.
+
+### Phase 5 — PG18.4 planner-hook patch and residual parallel-scan hang (2026-08-07)
+
+**Context:** the PostgreSQL 18.4 upgrade carries `pgbuild/patches/pg_duckdb-v1.1.1-planner-hook-chain.patch`, pinned by SHA-256 in `pgbuild/Makefile`. It replaces pg_duckdb's direct `standard_planner()` call in `PostgresTableReader::InitUnsafe` with a `PlanPostgresQuery()` helper that enters the full `planner_hook` chain behind a nest-level guard, so TimescaleDB can initialize per-query state. This addresses the #845/#963 null-deref crash: the crash probe no longer segfaults.
+
+**Residual defect (open):** the patch converts the crash into a **hang**, not a clean pass. With `timescaledb` and `pg_duckdb` both preloaded, after a hypertable + `time_bucket` query has run, this sequence intermittently hangs:
+
+```sql
+CREATE TABLE public.i963 (id integer PRIMARY KEY, value double precision);
+INSERT INTO public.i963 VALUES (1, 1.0);
+SET duckdb.force_execution = true;
+SELECT count(*) FROM public.i963;   -- hangs here
+```
+
+**Reproduction rate:** 2/8 isolated runs (~25%). It also fails `tests/test_pgembed.py::test_pg_duckdb_timescaledb_planner_probe_survives` intermittently in full-suite runs (1 failure in 3 consecutive full runs), surfacing as `subprocess.TimeoutExpired` after the test's 30 s psql timeout — not as a crash-marker assertion.
+
+**Evidence:** `pg_stat_activity` from a second connection during a live hang shows the backend blocked in
+
+```
+pid   | state  | wait_event_type | wait_event     | query
+55984 | active | IPC             | ParallelFinish | SELECT count(*) FROM public.i963;
+```
+
+The backend is waiting for a parallel worker that never finishes. `SET max_parallel_workers_per_gather = 0` does **not** prevent it (still 1/6 hangs), because `PostgresTableReader::InitRunWithParallelScan` launches workers itself via `ExecInitParallelPlan`/`LaunchParallelWorkers`, bypassing that GUC. The plausible mechanism is that routing the scan plan through the TimescaleDB hook can now yield a plan shape whose worker teardown pg_duckdb's self-managed parallel reader does not complete; this last step is inferred from the code path, not directly observed in a worker stack trace.
+
+**Status:** the patch is a net improvement (crash → intermittent hang) and is retained, but it does **not** fully close #845/#963. Treat "pg_duckdb + TimescaleDB in one instance under `duckdb.force_execution`" as still unsafe for production; the existing guidance to use separate pgembed instances for heavy mixed workloads stands. Attempting a worker-teardown fix, or gating pg_duckdb's self-managed parallel scan when TimescaleDB is loaded, is the natural follow-up.
