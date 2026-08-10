@@ -7,7 +7,7 @@ requires-python = ">=3.12"
 license = {file = "LICENSE"}
 urls={repository="https://github.com/Ladybug-Memory/pgembed"}
 authors=[{ name="Oscar Moll", email="orm@csail.mit.edu" }, { name="Arun Sharma", email="arun@sharma-home.net" }]
-keywords=["postgresql", "pgvector", "pg_duckdb", "pgembed", "vectorchord", "timescaledb", "rag"]
+keywords=["postgresql", "pgvector", "pgembed", "vectorchord", "timescaledb", "rag"]
 dependencies = [
     "fasteners>=0.19",
     "platformdirs>=4.0.0",

@@ -44,7 +44,6 @@ EXTENSION_SHARE_PATH = INSTALL_PATH / "share" / "postgresql" / "extension"
 
 EXTENSION_PACKAGES = {
     "pgvector": "pgembed_pgvector",
-    "pg_duckdb": "pgembed_pgduckdb",
     "vectorchord": None,
     "age": None,
     "psql_bm25s": None,
@@ -60,7 +59,6 @@ EXTENSION_ARTIFACT_STEMS = {
 
 EXTENSION_SO_FILES = {
     "pgvector": ("vector.dylib", "vector.so", "vector.dll"),
-    "pg_duckdb": ("pg_duckdb.dylib", "pg_duckdb.so", "pg_duckdb.dll"),
     "vectorchord": ("vchord.dylib", "vchord.so", "vchord.dll"),
     "age": ("age.dylib", "age.so", "age.dll"),
     "psql_bm25s": ("psql_bm25s.dylib", "psql_bm25s.so", "psql_bm25s.dll"),
@@ -69,7 +67,7 @@ EXTENSION_SO_FILES = {
     "pg_net": ("pg_net.dylib", "pg_net.so", "pg_net.dll"),
 }
 
-EXTENSION_PRECEDENCE = {"pg_duckdb": ("timescaledb",)}
+EXTENSION_PRECEDENCE: dict[str, tuple[str, ...]] = {}
 EXTENSION_NAMES = tuple(EXTENSION_PACKAGES)
 AVAILABLE_EXTENSIONS: dict[str, bool] = {name: False for name in EXTENSION_NAMES}
 _EXTENSION_PATHS: dict[str, Path] = {}
@@ -215,7 +213,6 @@ def get_extension_create_name(name: str) -> str:
             return extension.create_name
     return {
         "pgvector": "vector",
-        "pg_duckdb": "pg_duckdb",
         "vectorchord": "vchord",
         "age": "age",
         "psql_bm25s": "psql_bm25s",

@@ -97,9 +97,6 @@ def test_schema_v1_metadata_loads(tmp_path: Path) -> None:
     assert metadata.extensions["pgvector"].built is True
     assert metadata.extensions["pgvector"].built_for_postgres_major == 18
     assert metadata.extensions["pgvector"].update_sql == ()
-    assert metadata.extensions["pg_duckdb"].source_submodules == {
-        "duckdb": "d1dc88f950d456d72493df452dabdcd13aa413dd"
-    }
     assert BUNDLE_METADATA_PATH.parts[-4:] == (
         "pginstall", "share", "pgembed", "build-metadata.json"
     )
@@ -112,28 +109,28 @@ def test_generator_records_base_install_and_update_chain(tmp_path: Path) -> None
     (extension_dir / "vector.control").unlink()
     (extension_dir / "vector--0.8.2.sql").unlink()
 
-    library = prefix / "lib" / "postgresql" / "pg_duckdb.dylib"
+    library = prefix / "lib" / "postgresql" / "timescaledb.dylib"
     library.write_bytes(b"fixture")
-    (extension_dir / "pg_duckdb.control").write_text("default_version = '1.1.0'\n")
-    (extension_dir / "pg_duckdb--1.0.0.sql").write_text("-- base fixture\n")
-    (extension_dir / "pg_duckdb--1.0.0--1.1.0.sql").write_text("-- update fixture\n")
+    (extension_dir / "timescaledb.control").write_text("default_version = '2.27.1'\n")
+    (extension_dir / "timescaledb--2.27.0.sql").write_text("-- base fixture\n")
+    (extension_dir / "timescaledb--2.27.0--2.27.1.sql").write_text("-- update fixture\n")
 
     output = prefix / "bundle-metadata.json"
     result = _generate(
         prefix,
         output,
-        requested="pg_duckdb",
-        built="pg_duckdb",
+        requested="timescaledb",
+        built="timescaledb",
     )
     assert result.returncode == 0, result.stderr
     metadata = load_bundle_metadata(output)
     assert metadata is not None
-    extension = metadata.extensions["pg_duckdb"]
+    extension = metadata.extensions["timescaledb"]
     assert extension.install_sql == (
-        "share/postgresql/extension/pg_duckdb--1.0.0.sql"
+        "share/postgresql/extension/timescaledb--2.27.0.sql"
     )
     assert extension.update_sql == (
-        "share/postgresql/extension/pg_duckdb--1.0.0--1.1.0.sql",
+        "share/postgresql/extension/timescaledb--2.27.0--2.27.1.sql",
     )
 
 

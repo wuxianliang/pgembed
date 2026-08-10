@@ -1,5 +1,7 @@
 # pgembed 升级至 PostgreSQL 18：实施计划
 
+> **[2026-08-07 之后的变更] pg_duckdb 已从项目中移除。** 本文档是 PostgreSQL 18 升级当时的历史记录，其中关于 pg_duckdb 的构建配方、`pgbuild/patches/pg_duckdb-v1.1.1-planner-hook-chain.patch`、`EXTENSION_PRECEDENCE`、TimescaleDB↔pg_duckdb 回归测试与 `pgembed-pgduckdb` wheel 的所有内容，描述的都是当时的实际状态，**已不再适用于当前代码库**。当前 bundled 扩展集合为 pgvector、VectorChord、AGE、psql_bm25s、TimescaleDB、pg_cron、pg_net。
+
 **日期：** 2026-08-07  
 **状态：** 实现完成，等待三平台 clean native validation
 **交付范围：** PostgreSQL 18.4 RC implementation and release gates

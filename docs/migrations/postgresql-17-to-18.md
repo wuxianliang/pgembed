@@ -187,8 +187,7 @@ ORDER BY name;
 注意事项：
 
 - 只恢复 PG18 bundle metadata 声明为 built 的扩展。
-- preload 扩展必须在启动前配置；当前完整 release bundle 包括 `vchord,timescaledb,pg_duckdb,pg_cron,pg_net`，实际集合以 packaged metadata 为准。
-- 保持 TimescaleDB 在 pg_duckdb 之前创建；不要绕过 pgembed 的 `EXTENSION_PRECEDENCE`。
+- preload 扩展必须在启动前配置；当前完整 release bundle 包括 `vchord,timescaledb,pg_cron,pg_net`，实际集合以 packaged metadata 为准。
 - 不要把 PG17 `.so`、control/SQL 文件或旧 source/build directory 复制到 PG18 prefix。
 - 恢复后验证 vector/VectorChord/BM25 索引、Timescale hypertable、AGE、pg_cron 和 pg_net 的实际功能，而不仅是 `CREATE EXTENSION` 成功。
 
@@ -224,7 +223,6 @@ SELECT to_regprocedure('public.uuidv7()');
 - database/role/schema/table/row-count 抽样与权限检查；
 - extension catalog、preload、worker、索引和 query-plan smoke；
 - 同一 PG18 PGDATA 的 stop/restart 验证；
-- TimescaleDB↔pg_duckdb 创建顺序和 planner 生存性检查；
 - TigerFS 使用时，在不创建 UUID shim 的情况下验证 history/savepoint/undo，并按 `unmount → reclaim daemon → stop PostgreSQL` 清理；
 - application read/write、备份与恢复演练。
 
@@ -264,4 +262,3 @@ PG17 wheel 也不应直接读取 PG18 PGDATA。package downgrade 不是 data dow
 - PostgreSQL 18：`pg_upgrade`
 - PostgreSQL 18：UUID Functions
 - `docs/tigerfs.md`
-- `docs/investigations/pg_duckdb-timescaledb-time-bucket-collision-2026-07-28.md`

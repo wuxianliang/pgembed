@@ -1,5 +1,7 @@
 # 评审：PostgreSQL 18 升级计划批注
 
+> **[2026-08-07 之后的变更] pg_duckdb 已从项目中移除。** 本评审针对当时的升级计划，其中涉及 pg_duckdb upstream issue、`EXTENSION_PRECEDENCE` 与 Timescale/pg_duckdb 回归的条目均为历史内容，**已不再适用于当前代码库**。
+
 **日期：** 2026-08-07
 **评审对象：** `docs/plans/postgresql-18-upgrade-2026-08-07.md`（下称"plan"）
 **基线：** `prompt-exports/oracle-plan-2026-08-07-134044-postgresql-18-upgrad-e94a.md` 的 **Generated Plan** 响应（下称"export"）；其开头的 composed prompt / selected-file dump 仅作为上下文，不作为 plan 内容。

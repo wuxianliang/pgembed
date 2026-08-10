@@ -35,7 +35,6 @@ Think of it like SQLite, but with the power of PostgreSQL. Just `pip install pge
 - **Graph ready**: Includes [Apache AGE](https://github.com/apache/age) for graph traversals and property graphs
 - **Text search ready**: Includes [psql_bm25s](https://github.com/Intelligent-Internet/psql_bm25s) for BM25-based full-text search with ranking
 - **Time-series ready**: Includes [TimescaleDB](https://github.com/timescale/timescaledb) for hypertables and time-series workloads
-- **DuckDB in Postgres**: Includes [pg_duckdb](https://github.com/duckdb/pg_duckdb) for DuckDB's columnar query engine inside PostgreSQL
 - **Scheduling & HTTP**: Includes [pg_cron](https://github.com/citusdata/pg_cron) (job scheduler) and [pg_net](https://github.com/supabase/pg_net) (async HTTP client)
 
 ## Quick start
@@ -154,11 +153,10 @@ pgembed bundles a curated set of PostgreSQL extensions, built specifically for P
 | [Apache AGE](https://github.com/apache/age) | `age` | `age` | — | graph / openCypher |
 | [psql_bm25s](https://github.com/Intelligent-Internet/psql_bm25s) | `psql_bm25s` | `psql_bm25s` | — | BM25 full-text search |
 | [TimescaleDB](https://github.com/timescale/timescaledb) | `timescaledb` | `timescaledb` | `timescaledb` | hypertables / time-series |
-| [pg_duckdb](https://github.com/duckdb/pg_duckdb) | `pg_duckdb` | `pg_duckdb` | `pg_duckdb` | DuckDB in Postgres |
 | [pg_cron](https://github.com/citusdata/pg_cron) | `pg_cron` | `pg_cron` | `pg_cron` | job scheduler |
 | [pg_net](https://github.com/supabase/pg_net) | `pg_net` | `pg_net` | `pg_net` | async HTTP (requires libcurl) |
 
-`pgembed-pgvector` and `pgembed-pgduckdb` are also published as standalone wheels; the rest are bundled into the base `pgembed` wheel.
+`pgembed-pgvector` is also published as a standalone wheel; the rest are bundled into the base `pgembed` wheel.
 
 > 🐯 **TigerFS is not in this table** — it is a *companion client tool*, not a PostgreSQL extension. Unlike the C/Rust extensions above, TigerFS is a standalone binary at `pgembed.POSTGRES_BIN_PATH / "tigerfs"` that runs as a separate daemon and connects to your database as a client (no `CREATE EXTENSION`). See [Mount your database as a filesystem](#mount-your-database-as-a-filesystem).
 
@@ -169,7 +167,7 @@ import pgembed
 
 # Check which extensions are available
 print(pgembed.list_extensions())
-# {'pgvector': True, 'pg_duckdb': True, 'vectorchord': True, 'age': True, 'psql_bm25s': True, 'timescaledb': True, 'pg_cron': True, 'pg_net': True}
+# {'pgvector': True, 'vectorchord': True, 'age': True, 'psql_bm25s': True, 'timescaledb': True, 'pg_cron': True, 'pg_net': True}
 
 # Check if a specific extension is available, then create it
 if pgembed.has_extension('vectorchord'):
@@ -187,7 +185,7 @@ pgembed's release pipeline is Darwin/Linux-only:
 
 ### Preload before start
 
-TimescaleDB, VectorChord, pg_duckdb, pg_cron, and pg_net must be in `shared_preload_libraries` **before** PostgreSQL starts. Configure them when creating the server:
+TimescaleDB, VectorChord, pg_cron, and pg_net must be in `shared_preload_libraries` **before** PostgreSQL starts. Configure them when creating the server:
 
 ```python
 import pgembed
@@ -201,12 +199,6 @@ with pgembed.get_server(
     server.create_extension("pg_cron")
     server.create_extension("pg_net")
 ```
-
-### Known limitations
-
-**pg_duckdb + TimescaleDB (`time_bucket`).** Both extensions define `public.time_bucket(interval, …)` with identical signatures, so they collide at `CREATE EXTENSION` time. `server.create_extension("pg_duckdb")` handles this automatically: when TimescaleDB is available it is created **first**, so pg_duckdb's own conflict guard skips its `public.time_bucket` (falling back to `duckdb.time_bucket`) and both install cleanly. If you create extensions by hand via `psql`, create TimescaleDB **before** pg_duckdb.
-
-> ⚠️ Beyond the name collision, running pg_duckdb and TimescaleDB in the **same PostgreSQL instance** can, under certain mixed queries, trigger a planner crash (upstream [pg_duckdb#845](https://github.com/duckdb/pg_duckdb/issues/845)). It does not reproduce in basic use; for workloads that heavily mix both engines, run them in **separate pgembed instances** (separate `pgdata` directories via `pgembed.get_server(...)`).
 
 ### Building specific extensions
 
@@ -228,9 +220,6 @@ make psql_bm25s
 # Build only timescaledb
 make timescaledb
 
-# Build only pg_duckdb
-make pg_duckdb
-
 # Build only pg_cron
 make pg_cron
 
@@ -247,4 +236,4 @@ pgembed is a fork of [pgserver](https://github.com/orm011/pgserver), which was i
 
 - Bundled Darwin/Linux releases for macOS arm64 and Linux x86_64/aarch64
 - Robust process management and cleanup
-- Built-in pgvector, VectorChord, Apache AGE, psql_bm25s, TimescaleDB, pg_duckdb, pg_cron, and pg_net extensions
+- Built-in pgvector, VectorChord, Apache AGE, psql_bm25s, TimescaleDB, pg_cron, and pg_net extensions

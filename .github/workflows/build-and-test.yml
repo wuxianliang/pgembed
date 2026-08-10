@@ -78,17 +78,17 @@ jobs:
             os: macos-latest
             arch: arm64
             deployment-target: '26.0' # minos 26.0. This does not claim compatibility with older macOS.
-            extensions: pgvector vectorchord pg_duckdb age psql_bm25s timescaledb pg_cron pg_net tigerfs
+            extensions: pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net tigerfs
           - runner: ubuntu-latest
             os: ubuntu-latest
             arch: x86_64
             deployment-target: ''
-            extensions: pgvector vectorchord pg_duckdb age psql_bm25s timescaledb pg_cron pg_net tigerfs
+            extensions: pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net tigerfs
           - runner: ubuntu-24.04-arm
             os: ubuntu-latest
             arch: aarch64
             deployment-target: ''
-            extensions: pgvector vectorchord pg_duckdb age psql_bm25s timescaledb pg_cron pg_net tigerfs
+            extensions: pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net tigerfs
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -128,7 +128,7 @@ jobs:
           rustup default "$RUST_TOOLCHAIN"
       - name: Install build tools (macOS)
         if: matrix.os == 'macos-latest'
-        run: brew install ccache jq lz4 openssl cmake ninja icu4c@78 curl bison
+        run: brew install ccache jq openssl cmake ninja icu4c@78 curl bison
       - name: Assert system GNU Make 3.81 (macOS)
         if: matrix.os == 'macos-latest'
         run: make --version | grep -q '^GNU Make 3\.81$'
@@ -158,7 +158,7 @@ jobs:
           CIBW_BUILD: cp312-* cp313-* cp314-*
           CIBW_MANYLINUX: manylinux_2_39
           CIBW_BEFORE_ALL_MACOS: |
-            brew install jq llvm cmake ninja lz4 openssl icu4c@78 curl bison
+            brew install jq llvm cmake ninja openssl icu4c@78 curl bison
             export IS_MUSL=0
             rustup install 1.95.0
             rustup default 1.95.0
@@ -167,10 +167,10 @@ jobs:
           CIBW_BEFORE_ALL_LINUX: |
             set -e
             if command -v yum &> /dev/null; then
-              yum install -y ccache jq gcc openssl-devel llvm-devel clang-devel pkg-config cmake ninja-build lz4-devel libcurl-devel libicu-devel glib2-devel flex bison
+              yum install -y ccache jq gcc openssl-devel llvm-devel clang-devel pkg-config cmake ninja-build libcurl-devel libicu-devel glib2-devel flex bison
             elif command -v apt-get &> /dev/null; then
               apt-get update
-              apt-get install -y ccache jq gcc libssl-dev llvm-dev clang-dev pkg-config cmake ninja-build liblz4-dev libcurl4-openssl-dev libicu-dev libglib2.0-dev flex bison
+              apt-get install -y ccache jq gcc libssl-dev llvm-dev clang-dev pkg-config cmake ninja-build libcurl4-openssl-dev libicu-dev libglib2.0-dev flex bison
             fi
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.95.0
             export PATH="$HOME/.cargo/bin:/usr/lib/ccache:$PATH"

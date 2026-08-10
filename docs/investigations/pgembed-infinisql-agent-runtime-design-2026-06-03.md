@@ -1,5 +1,7 @@
 # Investigation: pgembed 专用 infinisql / pgsql Agent Runtime 设计
 
+> **[Superseded] pg_duckdb has since been removed from pgembed.** This investigation is a dated historical record; its statements about the `pg_duckdb` entry in pgembed's extension registry no longer reflect the current codebase.
+
 ## Summary
 结论：不要逐行迁移现有 infinisynapse Infinity SQL / NestJS / Java Spark Byzer runtime；应新建 pgembed-native `pgsql` runtime。保留现有产品概念（SQL tool UX、schema inspector、RAG/memory、sub-agent roles、task snapshots、tool/skill/template manifests），但底层改为 embedded Postgres + extension manifest + safe SQL executor + Postgres-native hybrid retrieval + provenance event log + Agno/DSPy/ActiveGraph 可选层。
 

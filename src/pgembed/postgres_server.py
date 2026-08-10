@@ -486,7 +486,6 @@ class PostgresServer:
 
         extension_map = {
             "vector": "pgvector",
-            "pg_duckdb": "pg_duckdb",
             "vchord": "vectorchord",
             "age": "age",
             "psql_bm25s": "psql_bm25s",

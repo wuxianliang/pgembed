@@ -21,7 +21,6 @@ PG_MAJOR = 18
 
 EXTENSIONS: dict[str, dict[str, Any]] = {
     "pgvector": dict(version="0.8.2", source_ref="v0.8.2", source_commit=None, source_sha256="69f4019389af05dc1c9548deb8628e62878e6e207c03907f2b8af2016472cdaa", stem="vector", create_name="vector", preload_name=None, requires_preload=False),
-    "pg_duckdb": dict(version="1.1.1", source_ref="v1.1.1", source_commit="7b0db3737a1ab2dfb182b742322426e3c4b500af", source_sha256=None, source_submodules={"duckdb": "d1dc88f950d456d72493df452dabdcd13aa413dd"}, stem="pg_duckdb", create_name="pg_duckdb", preload_name="pg_duckdb", requires_preload=True),
     "vectorchord": dict(version="1.1.1", source_ref="1.1.1", source_commit=None, source_sha256="d70b5595bfc852f1f24c05c0a40272e7deecbb0ddf8ffdddec5afa42c2392b1e", stem="vchord", create_name="vchord", preload_name="vchord", requires_preload=True),
     "age": dict(version="1.8.0", source_ref="release/PG18/1.8.0", source_commit="e43dc1a12b78fba4acef9835b2b10379b8d243b4", source_sha256=None, stem="age", create_name="age", preload_name=None, requires_preload=False),
     "psql_bm25s": dict(version=None, source_ref="d1c1db7e6c2a92c2a909e97c51cf2f45c0da808b", source_commit="d1c1db7e6c2a92c2a909e97c51cf2f45c0da808b", source_sha256=None, stem="psql_bm25s", create_name="psql_bm25s", preload_name=None, requires_preload=False),

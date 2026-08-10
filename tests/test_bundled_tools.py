@@ -63,7 +63,6 @@ def test_release_bundle_contains_complete_attested_extension_set() -> None:
         "age",
         "psql_bm25s",
         "timescaledb",
-        "pg_duckdb",
         "pg_cron",
         "pg_net",
     }

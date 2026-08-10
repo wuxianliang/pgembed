@@ -700,21 +700,18 @@ RELEASE_EXTENSION_ORDER = (
     "age",
     "psql_bm25s",
     "timescaledb",
-    "pg_duckdb",
     "pg_cron",
     "pg_net",
 )
 RELEASE_PRELOAD_PACKAGES = (
     "vectorchord",
     "timescaledb",
-    "pg_duckdb",
     "pg_cron",
     "pg_net",
 )
 RELEASE_PRELOAD_NAMES = (
     "vchord",
     "timescaledb",
-    "pg_duckdb",
     "pg_cron",
     "pg_net",
 )
@@ -859,11 +856,6 @@ def test_all_preload_extensions_restart(tmp_path: Path):
             "LOAD 'age'; SET search_path = ag_catalog, \"$user\", public; "
             "SELECT create_graph('pg18_restart_graph');"
         )
-        assert _psql_tuples(
-            pg,
-            "SELECT duckdb.time_bucket(INTERVAL '1 day', DATE '2026-08-07') "
-            "= DATE '2026-08-07';",
-        ) == [(True,)]
         assert _psql_tuples(pg, "SELECT to_regnamespace('net') IS NOT NULL;")[0][0]
         cron_job_id = _psql_tuples(
             pg,
@@ -931,183 +923,3 @@ def test_all_preload_extensions_restart(tmp_path: Path):
         assert len(preload_lines) == 1
         for library in RELEASE_PRELOAD_NAMES:
             assert preload_lines[0].split("=", 1)[1].count(library) == 1
-
-
-def test_pg_duckdb_creates_timescaledb_first_on_pg18(tmp_path: Path):
-    _require_full_release_metadata()
-    with pgembed.get_server(
-        tmp_path / "duckdb-order",
-        cleanup_mode="delete",
-        shared_preload_libraries=("timescaledb", "pg_duckdb"),
-    ) as pg:
-        pg.create_extension("pg_duckdb")
-        assert {
-            row[0]
-            for row in _psql_tuples(
-                pg,
-                "SELECT extname FROM pg_extension "
-                "WHERE extname IN ('timescaledb', 'pg_duckdb') ORDER BY 1;",
-            )
-        } == {"timescaledb", "pg_duckdb"}
-        assert _psql_tuples(
-            pg,
-            "SELECT count(*) > 0 FROM pg_proc p "
-            "JOIN pg_namespace n ON n.oid = p.pronamespace "
-            "JOIN pg_depend d ON d.objid = p.oid AND d.deptype = 'e' "
-            "JOIN pg_extension e ON e.oid = d.refobjid "
-            "WHERE n.nspname = 'public' AND p.proname = 'time_bucket' "
-            "AND e.extname = 'timescaledb';",
-        ) == [(True,)]
-        assert _psql_tuples(
-            pg,
-            "SELECT EXISTS (SELECT 1 FROM pg_proc p "
-            "JOIN pg_namespace n ON n.oid = p.pronamespace "
-            "WHERE n.nspname = 'duckdb' AND p.proname = 'time_bucket');",
-        ) == [(True,)]
-        assert _psql_tuples(pg, "SELECT 1;") == [(1,)]
-
-
-def test_pg_duckdb_then_timescaledb_records_known_collision(tmp_path: Path):
-    _require_full_release_metadata()
-    with pgembed.get_server(
-        tmp_path / "duckdb-reverse-order",
-        cleanup_mode="delete",
-        shared_preload_libraries=("timescaledb", "pg_duckdb"),
-    ) as pg:
-        pg.psql("CREATE EXTENSION pg_duckdb;")
-        with pytest.raises(subprocess.CalledProcessError):
-            pg.psql("CREATE EXTENSION timescaledb;")
-        assert _psql_tuples(pg, "SELECT 1;") == [(1,)]
-
-
-def test_pg_duckdb_parallel_scan_disabled_with_timescaledb(tmp_path: Path):
-    """pg_duckdb must not run its self-managed parallel scan when TimescaleDB is present.
-
-    TimescaleDB's loader returns early inside a parallel worker and relies on
-    Postgres' parallel-worker infrastructure to restore library state. pg_duckdb
-    launches workers itself via ExecInitParallelPlan()/LaunchParallelWorkers()
-    rather than through a Gather node, so that expectation does not hold and the
-    leader could block forever in ParallelFinish. The bundled patch disables the
-    parallel path whenever TimescaleDB is installed; this asserts the query
-    completes well inside the old 30s hang window.
-    """
-    _require_full_release_metadata()
-    with pgembed.get_server(
-        tmp_path / "duckdb-parallel-gate",
-        cleanup_mode="delete",
-        shared_preload_libraries=("timescaledb", "pg_duckdb"),
-    ) as pg:
-        pg.create_extension("pg_duckdb")
-        pg.psql(
-            """
-            CREATE TABLE parallel_gate_ts (
-              observed_at timestamptz NOT NULL,
-              value integer NOT NULL
-            );
-            SELECT create_hypertable('parallel_gate_ts', 'observed_at');
-            INSERT INTO parallel_gate_ts VALUES
-              ('2026-08-07 00:00:00+00', 1),
-              ('2026-08-07 00:01:00+00', 2);
-            SELECT time_bucket(INTERVAL '1 minute', observed_at), sum(value)
-              FROM parallel_gate_ts GROUP BY 1 ORDER BY 1;
-            """
-        )
-
-        # This is the sequence that hung in ParallelFinish before the gate.
-        result = subprocess.run(
-            [
-                str(pgembed.POSTGRES_BIN_PATH / "psql"),
-                "--no-psqlrc",
-                "--set=ON_ERROR_STOP=1",
-                pg.get_uri(),
-            ],
-            input="""
-            CREATE TABLE public.parallel_gate (id integer PRIMARY KEY, value double precision);
-            INSERT INTO public.parallel_gate VALUES (1, 1.0), (2, 2.0);
-            SET duckdb.force_execution = true;
-            SELECT count(*) FROM public.parallel_gate;
-            RESET duckdb.force_execution;
-            """,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=20,
-        )
-        assert result.returncode == 0, result.stdout + result.stderr
-        assert _psql_tuples(pg, "SELECT 1;") == [(1,)]
-
-
-def test_pg_duckdb_timescaledb_planner_probe_survives(tmp_path: Path):
-    _require_full_release_metadata()
-    with pgembed.get_server(
-        tmp_path / "duckdb-planner-probe",
-        cleanup_mode="delete",
-        shared_preload_libraries=("timescaledb", "pg_duckdb"),
-    ) as pg:
-        pg.create_extension("pg_duckdb")
-        pg.psql(
-            """
-            CREATE TABLE planner_probe (
-              observed_at timestamptz NOT NULL,
-              value integer NOT NULL
-            );
-            SELECT create_hypertable('planner_probe', 'observed_at');
-            INSERT INTO planner_probe VALUES
-              ('2026-08-07 00:00:00+00', 1),
-              ('2026-08-07 00:01:00+00', 2),
-              ('2026-08-07 00:02:00+00', 3);
-            SELECT time_bucket(INTERVAL '1 minute', observed_at), sum(value)
-              FROM planner_probe GROUP BY 1 ORDER BY 1;
-            """
-        )
-        postmaster = pgembed.utils.PostmasterInfo.read_from_pgdata(pg.pgdata)
-        assert postmaster is not None and postmaster.is_running()
-
-        probe_sql = """
-        CREATE TABLE public.pgduckdb_issue_963 (
-          id integer PRIMARY KEY,
-          value double precision
-        );
-        INSERT INTO public.pgduckdb_issue_963 VALUES (1, 1.0);
-        SET duckdb.force_execution = true;
-        SELECT count(*) FROM public.pgduckdb_issue_963;
-        RESET duckdb.force_execution;
-
-        CREATE OR REPLACE FUNCTION public.pgduckdb_issue_845_probe()
-        RETURNS void LANGUAGE plpgsql AS $$
-        BEGIN
-          EXECUTE 'DROP TABLE IF EXISTS pgduckdb_issue_845_tmp';
-          EXECUTE 'CREATE TEMP TABLE pgduckdb_issue_845_tmp AS SELECT 1 AS x';
-          EXECUTE 'SELECT count(*) FROM pgduckdb_issue_845_tmp';
-        END;
-        $$;
-        SELECT public.pgduckdb_issue_845_probe();
-        DROP FUNCTION public.pgduckdb_issue_845_probe();
-        """
-        result = subprocess.run(
-            [
-                str(pgembed.POSTGRES_BIN_PATH / "psql"),
-                "--no-psqlrc",
-                "--set=ON_ERROR_STOP=1",
-                pg.get_uri(),
-            ],
-            input=probe_sql,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=30,
-        )
-        output = result.stdout + result.stderr
-        crash_markers = (
-            "server closed the connection unexpectedly",
-            "connection to server was lost",
-            "terminated by signal",
-            "Segmentation fault",
-        )
-        assert not any(marker.lower() in output.lower() for marker in crash_markers), output
-
-        # A normal SQL-level incompatibility may still return non-zero, but neither
-        # upstream probe may kill the connection or the postmaster.
-        postmaster = pgembed.utils.PostmasterInfo.read_from_pgdata(pg.pgdata)
-        assert postmaster is not None and postmaster.is_running()
-        assert _psql_tuples(pg, "SELECT 1;") == [(1,)]

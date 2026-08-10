@@ -1,5 +1,7 @@
 # Investigation: Embedded PostgreSQL Plugin Installation
 
+> **[Superseded] pg_duckdb has since been removed from pgembed.** This investigation is a dated historical record; its statements about the `pg_duckdb` entry in pgembed's extension registry no longer reflect the current codebase.
+
 ## Summary
 pgembed does not install arbitrary PostgreSQL plugins at application runtime. Its supported model is build-time bundling: PostgreSQL and selected server-side extension artifacts are compiled/installed into `src/pgembed/pginstall`, packaged into the wheel, detected by hard-coded Python registry logic, and then activated per database with `CREATE EXTENSION`.
 

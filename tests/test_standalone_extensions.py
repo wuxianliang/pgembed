@@ -12,7 +12,6 @@ import pytest
     ("module_name", "library_name", "control_name"),
     [
         ("pgembed_pgvector", "vector.dylib", "pgvector.control"),
-        ("pgembed_pgduckdb", "pg_duckdb.dylib", "pg_duckdb.control"),
     ],
 )
 def test_standalone_helpers_never_fall_back_to_bundled_artifacts(

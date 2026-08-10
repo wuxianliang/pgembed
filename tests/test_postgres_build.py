@@ -12,8 +12,6 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MAKEFILE = REPO_ROOT / "pgbuild" / "Makefile"
-PG_DUCKDB_PATCH = REPO_ROOT / "pgbuild" / "patches" / "pg_duckdb-v1.1.1-planner-hook-chain.patch"
-PG_DUCKDB_PATCH_SHA256 = "e8caa2ae4b17269678da33a59ff9362f33f67a3bd870789ae3bd34b45fadee00"
 
 
 class BundleStamp:
@@ -76,9 +74,6 @@ def test_identical_stamp_preserves_mtime_and_complete_prefix(tmp_path: Path) -> 
         ("POSTGRES_SRC_REF", "REL_18_5"),
         ("POSTGRES_CONFIGURE_FLAGS", "--without-readline --with-icu"),
         ("EXTENSIONS", "pgvector"),
-        ("PG_DUCKDB_GEN", "fixture-generator"),
-        ("PG_DUCKDB_LZ4_PREFIX", "/fixture/lz4"),
-        ("PG_DUCKDB_OPENSSL_PREFIX", "/fixture/openssl"),
         ("PSQL_BM25S_ICU_PREFIX", "/fixture/icu"),
         ("PG_NET_CURL_PREFIX", "/fixture/curl"),
     ],
@@ -148,46 +143,15 @@ def test_source_lock_and_toolchain_are_recorded(tmp_path: Path) -> None:
     assert "postgres_commit=f5cc81719e6da4cbdb1f797c48b693e91018153a" in text
     assert "rust_toolchain=1.95.0" in text
     assert "cargo_pgrx_version=0.17.0" in text
-    assert "pg_duckdb_gen=" in text
-    assert f"pg_duckdb=v1.1.1:7b0db3737a1ab2dfb182b742322426e3c4b500af:duckdb=d1dc88f950d456d72493df452dabdcd13aa413dd:patch={PG_DUCKDB_PATCH_SHA256}" in text
     assert "psql_bm25s_icu_prefix=" in text
     assert "pg_net_curl_prefix=" in text
-
-
-def test_pg_duckdb_planner_patch_is_pinned_and_applied() -> None:
-    makefile = MAKEFILE.read_text()
-    patch = PG_DUCKDB_PATCH.read_text()
-
-    assert PG_DUCKDB_PATCH.is_file()
-    assert "PG_DUCKDB_PATCH := patches/pg_duckdb-v1.1.1-planner-hook-chain.patch" in makefile
-    assert f"PG_DUCKDB_PATCH_SHA256 := {PG_DUCKDB_PATCH_SHA256}" in makefile
-    assert "$(PG_DUCKDB_SOURCE_VERIFIED): $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PG_DUCKDB_PATCH)" in makefile
-    assert "printf '%s  %s\\n' '$(PG_DUCKDB_PATCH_SHA256)' '$(PG_DUCKDB_PATCH)' | $(SHA256_CMD) -c -" in makefile
-    assert 'patch -d "$(PG_DUCKDB_DIR)" -p1 < "$(PG_DUCKDB_PATCH)"' in makefile
-    assert "PlanPostgresQuery" in patch
-    assert "postgres_planner_nest_level" in patch
-    assert "PG_FINALLY" in patch
-    assert "-\tPlannedStmt *planned_stmt = standard_planner(query, table_scan_query, 0, nullptr);" in patch
-    assert "+\tPlannedStmt *planned_stmt = PlanPostgresQuery(query, table_scan_query, 0, nullptr);" in patch
-
-    # TimescaleDB is loaded via a rendezvous that its loader deliberately skips
-    # inside parallel workers, so pg_duckdb's self-managed parallel scan must
-    # stay disabled whenever TimescaleDB is installed. Without this the leader
-    # can hang forever in ParallelFinish.
-    assert "TimescaleDBIsInstalled" in patch
-    assert 'get_extension_oid("timescaledb", true) != InvalidOid' in patch
-    assert "+\trun_scan_with_parallel_workers &= !TimescaleDBIsInstalled();" in patch
-    assert "grep -q 'TimescaleDBIsInstalled'" in makefile
-    assert (
-        "grep -q 'run_scan_with_parallel_workers &= !TimescaleDBIsInstalled();'" in makefile
-    )
+    assert "pg_duckdb" not in text
 
 
 def test_all_git_sources_use_verification_markers() -> None:
     makefile = MAKEFILE.read_text()
     markers = (
         "POSTGRES_SOURCE_VERIFIED",
-        "PG_DUCKDB_SOURCE_VERIFIED",
         "AGE_SOURCE_VERIFIED",
         "PSQL_BM25S_SOURCE_VERIFIED",
         "PG_CRON_SOURCE_VERIFIED",
@@ -196,7 +160,6 @@ def test_all_git_sources_use_verification_markers() -> None:
     for marker in markers:
         assert f"$({marker}): $(POSTGRES_BUNDLE_CONFIG_STAMP)" in makefile
     assert "$(POSTGRES_SRC)/configure: $(POSTGRES_BUNDLE_CONFIG_STAMP)" not in makefile
-    assert "$(PG_DUCKDB_DIR)/Makefile: $(POSTGRES_BUNDLE_CONFIG_STAMP)" not in makefile
     assert "AGE_BISON ?=" in makefile
     assert 'BISON="$(AGE_BISON)"' in makefile
     assert 'BISONFLAGS="$(AGE_BISONFLAGS)"' in makefile

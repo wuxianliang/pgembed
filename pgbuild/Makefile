@@ -25,9 +25,9 @@ CARGO_PGRX_VERSION := 0.17.0
 RUST_EXTENSIONS_SUPPORTED := $(if $(filter 1,$(IS_MUSL)),0,1)
 
 ifeq ($(RUST_EXTENSIONS_SUPPORTED),1)
-EXTENSIONS ?= pgvector vectorchord pg_duckdb age psql_bm25s timescaledb pg_cron pg_net tigerfs
+EXTENSIONS ?= pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net tigerfs
 else
-EXTENSIONS ?= pgvector pg_duckdb age psql_bm25s timescaledb pg_cron pg_net tigerfs
+EXTENSIONS ?= pgvector age psql_bm25s timescaledb pg_cron pg_net tigerfs
 endif
 REQUESTED_EXTENSIONS := $(strip $(EXTENSIONS))
 UNSUPPORTED_EXTENSIONS :=
@@ -56,19 +56,6 @@ PGVECTOR_TAG := v0.8.2
 PGVECTOR_SHA256 := 69f4019389af05dc1c9548deb8628e62878e6e207c03907f2b8af2016472cdaa
 PGVECTOR_URL := https://github.com/pgvector/pgvector/archive/refs/tags/$(PGVECTOR_TAG).tar.gz
 PGVECTOR_DIR := pgvector-$(PGVECTOR_TAG)
-
-PG_DUCKDB_TAG := v1.1.1
-PG_DUCKDB_COMMIT := 7b0db3737a1ab2dfb182b742322426e3c4b500af
-PG_DUCKDB_DUCKDB_COMMIT := d1dc88f950d456d72493df452dabdcd13aa413dd
-PG_DUCKDB_REPO := https://github.com/duckdb/pg_duckdb
-PG_DUCKDB_DIR := pg_duckdb-$(PG_DUCKDB_TAG)
-PG_DUCKDB_PATCH := patches/pg_duckdb-v1.1.1-planner-hook-chain.patch
-PG_DUCKDB_PATCH_SHA256 := e8caa2ae4b17269678da33a59ff9362f33f67a3bd870789ae3bd34b45fadee00
-PG_DUCKDB_SOURCE_VERIFIED := $(PG_DUCKDB_DIR)/.pgembed-source-verified
-PG_DUCKDB_GEN ?= $(shell if command -v ninja >/dev/null 2>&1; then echo ninja; else echo make; fi)
-PG_DUCKDB_LZ4_PREFIX ?= $(shell if [ -d /opt/homebrew/opt/lz4 ]; then echo /opt/homebrew/opt/lz4; elif [ -d /usr/local/opt/lz4 ]; then echo /usr/local/opt/lz4; fi)
-PG_DUCKDB_OPENSSL_PREFIX ?= $(shell if [ -d /opt/homebrew/opt/openssl@3 ]; then echo /opt/homebrew/opt/openssl@3; elif [ -d /usr/local/opt/openssl@3 ]; then echo /usr/local/opt/openssl@3; fi)
-PG_DUCKDB_LDFLAGS := $(if $(PG_DUCKDB_LZ4_PREFIX),-L$(PG_DUCKDB_LZ4_PREFIX)/lib,) $(if $(PG_DUCKDB_OPENSSL_PREFIX),-L$(PG_DUCKDB_OPENSSL_PREFIX)/lib -lssl -lcrypto,)
 
 VECTORCHORD_TAG := 1.1.1
 VECTORCHORD_SHA256 := d70b5595bfc852f1f24c05c0a40272e7deecbb0ddf8ffdddec5afa42c2392b1e
@@ -122,7 +109,7 @@ TIGERFS_SHA256_Darwin_x86_64 := c62f7017e63750de4ae9375fb9becb1a50f0006ed44dfaee
 TIGERFS_EXPECTED_SHA256 := $(TIGERFS_SHA256_$(TIGERFS_OS)_$(TIGERFS_ARCH))
 TIGERFS_SELECTED := $(filter tigerfs,$(EXTENSIONS) $(MAKECMDGOALS))
 
-NATIVE_BUILD_DIRS := $(POSTGRES_SRC) $(POSTGRES_BLD) $(PGVECTOR_DIR) $(PG_DUCKDB_DIR) $(VECTORCHORD_DIR) $(AGE_DIR) $(PSQL_BM25S_DIR) $(TIMESCALEDB_DIR) $(PG_CRON_DIR) $(PG_NET_DIR)
+NATIVE_BUILD_DIRS := $(POSTGRES_SRC) $(POSTGRES_BLD) $(PGVECTOR_DIR) $(VECTORCHORD_DIR) $(AGE_DIR) $(PSQL_BM25S_DIR) $(TIMESCALEDB_DIR) $(PG_CRON_DIR) $(PG_NET_DIR)
 
 .PHONY: FORCE
 FORCE:
@@ -153,11 +140,6 @@ $(POSTGRES_BUNDLE_CONFIG_STAMP): FORCE
 		'final_extensions=$(FINAL_EXTENSIONS)' \
 		'skipped_extensions=$(SKIPPED_EXTENSIONS)' \
 		'pgvector=$(PGVECTOR_TAG):$(PGVECTOR_SHA256)' \
-		'pg_duckdb=$(PG_DUCKDB_TAG):$(PG_DUCKDB_COMMIT):duckdb=$(PG_DUCKDB_DUCKDB_COMMIT):patch=$(PG_DUCKDB_PATCH_SHA256)' \
-		'pg_duckdb_gen=$(PG_DUCKDB_GEN)' \
-		'pg_duckdb_lz4_prefix=$(PG_DUCKDB_LZ4_PREFIX)' \
-		'pg_duckdb_openssl_prefix=$(PG_DUCKDB_OPENSSL_PREFIX)' \
-		'pg_duckdb_ldflags=$(PG_DUCKDB_LDFLAGS)' \
 		'vectorchord=$(VECTORCHORD_TAG):$(VECTORCHORD_SHA256)' \
 		'age=$(AGE_TAG):$(AGE_COMMIT)' \
 		'psql_bm25s=$(PSQL_BM25S_COMMIT)' \
@@ -180,11 +162,10 @@ $(POSTGRES_BUNDLE_CONFIG_STAMP): FORCE
 	rm -rf "$(INSTALL_PREFIX)" $(NATIVE_BUILD_DIRS); \
 	mv -f "$$tmp" "$@"
 
-.PHONY: all postgres pgvector pg_duckdb vectorchord age psql_bm25s timescaledb pg_cron pg_net tigerfs bundle-metadata
+.PHONY: all postgres pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net tigerfs bundle-metadata
 all: postgres $(EXTENSIONS) bundle-metadata
 postgres: $(INSTALL_PREFIX)/bin/postgres
 pgvector: postgres $(INSTALL_PREFIX)/lib/postgresql/vector.$(PG_DLSUFFIX)
-pg_duckdb: postgres $(INSTALL_PREFIX)/lib/postgresql/pg_duckdb.$(PG_DLSUFFIX)
 vectorchord: postgres $(INSTALL_PREFIX)/lib/postgresql/vchord.$(PG_DLSUFFIX)
 age: postgres $(INSTALL_PREFIX)/lib/postgresql/age.$(PG_DLSUFFIX)
 psql_bm25s: postgres $(INSTALL_PREFIX)/lib/postgresql/psql_bm25s.$(PG_DLSUFFIX)
@@ -227,28 +208,6 @@ $(PGVECTOR_DIR)/Makefile: $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PGVECTOR_DIR).tar.gz
 
 $(INSTALL_PREFIX)/lib/postgresql/vector.$(PG_DLSUFFIX): $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PGVECTOR_DIR)/Makefile $(INSTALL_PREFIX)/bin/postgres
 	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(PGVECTOR_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config -j && $(MAKE) -C $(PGVECTOR_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config install
-
-$(PG_DUCKDB_SOURCE_VERIFIED): $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PG_DUCKDB_PATCH)
-	@set -eu; \
-	rm -rf "$(PG_DUCKDB_DIR)"; \
-	printf '%s  %s\n' '$(PG_DUCKDB_PATCH_SHA256)' '$(PG_DUCKDB_PATCH)' | $(SHA256_CMD) -c -; \
-	git clone --branch "$(PG_DUCKDB_TAG)" --single-branch "$(PG_DUCKDB_REPO)" "$(PG_DUCKDB_DIR)"; \
-	git -C "$(PG_DUCKDB_DIR)" submodule update --init --recursive; \
-	test "$$(git -C "$(PG_DUCKDB_DIR)" rev-parse HEAD)" = "$(PG_DUCKDB_COMMIT)"; \
-	test "$$(git -C "$(PG_DUCKDB_DIR)/third_party/duckdb" rev-parse HEAD)" = "$(PG_DUCKDB_DUCKDB_COMMIT)"; \
-	patch -d "$(PG_DUCKDB_DIR)" -p1 < "$(PG_DUCKDB_PATCH)"; \
-	test -f "$(PG_DUCKDB_DIR)/Makefile"; \
-	grep -q 'PlanPostgresQuery' "$(PG_DUCKDB_DIR)/include/pgduckdb/pgduckdb_hooks.hpp"; \
-	grep -q 'postgres_planner_nest_level' "$(PG_DUCKDB_DIR)/src/pgduckdb_hooks.cpp"; \
-	grep -q 'PG_FINALLY' "$(PG_DUCKDB_DIR)/src/pgduckdb_hooks.cpp"; \
-	grep -q 'PlanPostgresQuery(query, table_scan_query' "$(PG_DUCKDB_DIR)/src/scan/postgres_table_reader.cpp"; \
-	! grep -q 'standard_planner(query, table_scan_query' "$(PG_DUCKDB_DIR)/src/scan/postgres_table_reader.cpp"; \
-	grep -q 'TimescaleDBIsInstalled' "$(PG_DUCKDB_DIR)/src/scan/postgres_table_reader.cpp"; \
-	grep -q 'run_scan_with_parallel_workers &= !TimescaleDBIsInstalled();' "$(PG_DUCKDB_DIR)/src/scan/postgres_table_reader.cpp"; \
-	touch "$@"
-
-$(INSTALL_PREFIX)/lib/postgresql/pg_duckdb.$(PG_DLSUFFIX): $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PG_DUCKDB_SOURCE_VERIFIED) $(INSTALL_PREFIX)/bin/postgres
-	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(PG_DUCKDB_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config DUCKDB_BUILD=ReleaseStatic DUCKDB_GEN=$(PG_DUCKDB_GEN) LDFLAGS="$(PG_DUCKDB_LDFLAGS)" install
 
 $(VECTORCHORD_DIR).tar.gz:
 	@set -eu; \

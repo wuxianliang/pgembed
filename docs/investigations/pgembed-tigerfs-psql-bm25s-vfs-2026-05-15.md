@@ -1,5 +1,7 @@
 # Investigation: Pgembed + tigerfs + psql_bm25s as Virtual Filesystem
 
+> **[Superseded] pg_duckdb has since been removed from pgembed.** This investigation is a dated historical record; its statements about the `pg_duckdb` entry in pgembed's extension registry no longer reflect the current codebase.
+
 ## Summary
 可以用 TigerFS 挂载 Pgembed 启动的 PostgreSQL 数据库，但前提是 Pgembed server 持续运行，并把 `PostgresServer.get_uri()` 返回的 socket/TCP 连接串显式传给 TigerFS。`psql_bm25s` 可以在底层 PostgreSQL 中作为扩展/索引访问方法工作，但不会自动变成 TigerFS 的文件系统级搜索能力；当前 TigerFS 默认路径生成的是等值过滤、普通排序和 `SELECT *`，不会调用 `psql_bm25s_query*`、`@@`、`@@@` 或 `<=>`。
 
