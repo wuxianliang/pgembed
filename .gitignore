@@ -146,3 +146,6 @@ src/pgembed/pginstall
 
 # Local agent/oracle session exports (not project deliverables)
 prompt-exports/
+
+# Local investigation notes (not project deliverables)
+docs/investigations/
