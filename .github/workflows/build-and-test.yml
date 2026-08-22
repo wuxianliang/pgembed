@@ -177,6 +177,10 @@ jobs:
             rustup default 1.95.0
             cargo install cargo-pgrx --version 0.17.0 --locked
             make EXTENSIONS="${{ matrix.extensions }}" build
+          # Same handoff as CIBW_AFTER_ALL_LINUX, on the runner directly.
+          CIBW_AFTER_ALL_MACOS: |
+            cp src/pgembed/pginstall/share/pgembed/build-metadata.json wheelhouse/
+            cp pgbuild/.postgres-bundle-config.stamp wheelhouse/postgres-bundle-config.stamp
           CIBW_BEFORE_ALL_LINUX: |
             set -e
             if command -v yum &> /dev/null; then
@@ -202,6 +206,13 @@ jobs:
             # no RUSTFLAGS target-features: AVX2/FMA produce an x86-64-v3
             # binary that auditwheel's manylinux policy rejects
             make EXTENSIONS="${{ matrix.extensions }}" build
+          # cibuildwheel copies the project into the container instead of
+          # bind-mounting it, so anything make writes (build metadata, stamp)
+          # dies with the container. /output is docker-cp'd to wheelhouse
+          # afterwards; use it to bring the attestation files back.
+          CIBW_AFTER_ALL_LINUX: |
+            cp /project/src/pgembed/pginstall/share/pgembed/build-metadata.json /output/
+            cp /project/pgbuild/.postgres-bundle-config.stamp /output/postgres-bundle-config.stamp
           CIBW_ENVIRONMENT_LINUX: PATH="$HOME/.cargo/bin:$PATH:/project/src/pgembed/pginstall/bin" EXTENSIONS="${{ matrix.extensions }}" RUSTUP_TOOLCHAIN=1.95.0 OPENSSL_DIR=/usr/local/curl-pg/openssl PG_NET_CURL_PREFIX=/usr/local/curl-pg PGSQL_HTTP_CURL_CONFIG=/usr/local/curl-pg/bin/curl-config
           CIBW_ENVIRONMENT_MANYLINUX: LIBCLANG_PATH=/usr/lib64
           # No LDFLAGS: "-lssl -lcrypto" here linked Homebrew OpenSSL into the
@@ -217,7 +228,7 @@ jobs:
       - name: Generate wheel hashes and source lock evidence
         run: |
           python tools/release_evidence.py generate \
-            --metadata src/pgembed/pginstall/share/pgembed/build-metadata.json \
+            --metadata wheelhouse/build-metadata.json \
             --wheel-dir wheelhouse \
             --output-dir release-evidence
       - name: Archive wheel payloads
@@ -230,8 +241,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           path: |
-            src/pgembed/pginstall/share/pgembed/build-metadata.json
-            pgbuild/.postgres-bundle-config.stamp
+            wheelhouse/build-metadata.json
+            wheelhouse/postgres-bundle-config.stamp
             release-evidence/wheel-sha256s.txt
             release-evidence/source-locks.json
           name: pg18-bundle-attestation-${{ matrix.os }}-${{ matrix.arch }}
