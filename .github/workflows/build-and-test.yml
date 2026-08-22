@@ -78,17 +78,17 @@ jobs:
             os: macos-latest
             arch: arm64
             deployment-target: '26.0' # minos 26.0. This does not claim compatibility with older macOS.
-            extensions: pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net tigerfs
+            extensions: pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh tigerfs
           - runner: ubuntu-latest
             os: ubuntu-latest
             arch: x86_64
             deployment-target: ''
-            extensions: pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net tigerfs
+            extensions: pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh tigerfs
           - runner: ubuntu-24.04-arm
             os: ubuntu-latest
             arch: aarch64
             deployment-target: ''
-            extensions: pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net tigerfs
+            extensions: pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh tigerfs
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

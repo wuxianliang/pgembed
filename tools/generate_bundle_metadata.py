@@ -27,6 +27,8 @@ EXTENSIONS: dict[str, dict[str, Any]] = {
     "timescaledb": dict(version="2.27.1", source_ref="2.27.1", source_commit=None, source_sha256="f0a940720bb5b0b635dae4d8aeceb13e83b196b8aab8717876af0f45efa47ab6", stem="timescaledb", create_name="timescaledb", preload_name="timescaledb", requires_preload=True),
     "pg_cron": dict(version="1.6.7", source_ref="v1.6.7", source_commit="465b38c737f584d520229f5a1d69d1d44649e4e5", source_sha256=None, stem="pg_cron", create_name="pg_cron", preload_name="pg_cron", requires_preload=True),
     "pg_net": dict(version="0.20.5", source_ref="v0.20.5", source_commit="a8299b11182ea5c974f5e89ae83e70e9e44e9e8f", source_sha256=None, stem="pg_net", create_name="pg_net", preload_name="pg_net", requires_preload=True),
+    "pgsql_http": dict(version="1.7", source_ref="v1.7.0", source_commit=None, source_sha256="d0330cbf32b37be3bd7ce52919439c903a6f4e88e99e359de2db4050bc3ef726", stem="http", create_name="http", preload_name=None, requires_preload=False),
+    "plsh": dict(version="2", source_ref="8bcfab5a0f483fc7eda2ae93b6ef64d10565785c", source_commit="8bcfab5a0f483fc7eda2ae93b6ef64d10565785c", source_sha256=None, stem="plsh", create_name="plsh", preload_name=None, requires_preload=False),
 }
 
 

@@ -702,6 +702,8 @@ RELEASE_EXTENSION_ORDER = (
     "timescaledb",
     "pg_cron",
     "pg_net",
+    "pgsql_http",
+    "plsh",
 )
 RELEASE_PRELOAD_PACKAGES = (
     "vectorchord",

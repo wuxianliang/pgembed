@@ -25,14 +25,14 @@ CARGO_PGRX_VERSION := 0.17.0
 RUST_EXTENSIONS_SUPPORTED := $(if $(filter 1,$(IS_MUSL)),0,1)
 
 ifeq ($(RUST_EXTENSIONS_SUPPORTED),1)
-EXTENSIONS ?= pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net tigerfs
+EXTENSIONS ?= pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh tigerfs
 else
-EXTENSIONS ?= pgvector age psql_bm25s timescaledb pg_cron pg_net tigerfs
+EXTENSIONS ?= pgvector age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh tigerfs
 endif
 REQUESTED_EXTENSIONS := $(strip $(EXTENSIONS))
 UNSUPPORTED_EXTENSIONS :=
 ifeq ($(HAS_LIBCURL),0)
-UNSUPPORTED_EXTENSIONS += pg_net
+UNSUPPORTED_EXTENSIONS += pg_net pgsql_http
 endif
 ifeq ($(RUST_EXTENSIONS_SUPPORTED),0)
 UNSUPPORTED_EXTENSIONS += vectorchord
@@ -97,6 +97,24 @@ PG_NET_CURL_PREFIX ?= $(shell if [ -d /opt/homebrew/opt/curl ]; then echo /opt/h
 PG_NET_CURL_CPPFLAGS := $(if $(PG_NET_CURL_PREFIX),-I$(PG_NET_CURL_PREFIX)/include,)
 PG_NET_CURL_LDFLAGS := $(if $(PG_NET_CURL_PREFIX),-L$(PG_NET_CURL_PREFIX)/lib,)
 
+PGSQL_HTTP_TAG := v1.7.0
+PGSQL_HTTP_SHA256 := d0330cbf32b37be3bd7ce52919439c903a6f4e88e99e359de2db4050bc3ef726
+PGSQL_HTTP_URL := https://github.com/pramsey/pgsql-http/archive/refs/tags/$(PGSQL_HTTP_TAG).tar.gz
+PGSQL_HTTP_DIR := pgsql-http-$(PGSQL_HTTP_TAG)
+# pgsql-http shells out to curl-config itself; keep the resolved path in the
+# bundle identity so switching libcurl providers rebuilds the extension.
+# Homebrew curl is keg-only, so on macOS this resolves to the SDK's
+# /usr/bin/curl-config and links the system libcurl.
+PGSQL_HTTP_CURL_CONFIG ?= $(shell command -v curl-config 2>/dev/null || echo curl-config)
+
+# Pinned to upstream master (not the 1.20220917 tag): commits after the tag fix a
+# shadowed-variable bug in the trigger OLD-tuple path (5d538a9). No local patches;
+# if one becomes necessary, vendor the tree in-repo instead of cloning.
+PLSH_COMMIT := 8bcfab5a0f483fc7eda2ae93b6ef64d10565785c
+PLSH_REPO := https://github.com/petere/plsh.git
+PLSH_DIR := plsh-$(PLSH_COMMIT)
+PLSH_SOURCE_VERIFIED := $(PLSH_DIR)/.pgembed-source-verified
+
 TIGERFS_TAG ?= v0.7.0
 TIGERFS_OS ?= $(HOST_OS)
 TIGERFS_ARCH ?= $(if $(filter arm64 aarch64,$(HOST_ARCH)),arm64,$(if $(filter x86_64 amd64,$(HOST_ARCH)),x86_64,$(error unsupported TIGERFS_ARCH for tigerfs: $(HOST_ARCH))))
@@ -109,7 +127,7 @@ TIGERFS_SHA256_Darwin_x86_64 := c62f7017e63750de4ae9375fb9becb1a50f0006ed44dfaee
 TIGERFS_EXPECTED_SHA256 := $(TIGERFS_SHA256_$(TIGERFS_OS)_$(TIGERFS_ARCH))
 TIGERFS_SELECTED := $(filter tigerfs,$(EXTENSIONS) $(MAKECMDGOALS))
 
-NATIVE_BUILD_DIRS := $(POSTGRES_SRC) $(POSTGRES_BLD) $(PGVECTOR_DIR) $(VECTORCHORD_DIR) $(AGE_DIR) $(PSQL_BM25S_DIR) $(TIMESCALEDB_DIR) $(PG_CRON_DIR) $(PG_NET_DIR)
+NATIVE_BUILD_DIRS := $(POSTGRES_SRC) $(POSTGRES_BLD) $(PGVECTOR_DIR) $(VECTORCHORD_DIR) $(AGE_DIR) $(PSQL_BM25S_DIR) $(TIMESCALEDB_DIR) $(PG_CRON_DIR) $(PG_NET_DIR) $(PGSQL_HTTP_DIR) $(PLSH_DIR)
 
 .PHONY: FORCE
 FORCE:
@@ -151,6 +169,9 @@ $(POSTGRES_BUNDLE_CONFIG_STAMP): FORCE
 		'pg_net_curl_prefix=$(PG_NET_CURL_PREFIX)' \
 		'pg_net_curl_cppflags=$(PG_NET_CURL_CPPFLAGS)' \
 		'pg_net_curl_ldflags=$(PG_NET_CURL_LDFLAGS)' \
+		'pgsql_http=$(PGSQL_HTTP_TAG):$(PGSQL_HTTP_SHA256)' \
+		'pgsql_http_curl_config=$(PGSQL_HTTP_CURL_CONFIG)' \
+		'plsh=$(PLSH_COMMIT)' \
 		'tigerfs=$(TIGERFS_TAG):$(TIGERFS_OS):$(TIGERFS_ARCH):$(TIGERFS_EXPECTED_SHA256)' \
 		'rust_toolchain=$(RUST_TOOLCHAIN)' \
 		'cargo_pgrx_version=$(CARGO_PGRX_VERSION)' > "$$tmp"; \
@@ -162,7 +183,7 @@ $(POSTGRES_BUNDLE_CONFIG_STAMP): FORCE
 	rm -rf "$(INSTALL_PREFIX)" $(NATIVE_BUILD_DIRS); \
 	mv -f "$$tmp" "$@"
 
-.PHONY: all postgres pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net tigerfs bundle-metadata
+.PHONY: all postgres pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh tigerfs bundle-metadata
 all: postgres $(EXTENSIONS) bundle-metadata
 postgres: $(INSTALL_PREFIX)/bin/postgres
 pgvector: postgres $(INSTALL_PREFIX)/lib/postgresql/vector.$(PG_DLSUFFIX)
@@ -172,6 +193,8 @@ psql_bm25s: postgres $(INSTALL_PREFIX)/lib/postgresql/psql_bm25s.$(PG_DLSUFFIX)
 timescaledb: postgres $(INSTALL_PREFIX)/lib/postgresql/timescaledb.$(PG_DLSUFFIX)
 pg_cron: postgres $(INSTALL_PREFIX)/lib/postgresql/pg_cron.$(PG_DLSUFFIX)
 pg_net: postgres $(INSTALL_PREFIX)/lib/postgresql/pg_net.$(PG_DLSUFFIX)
+pgsql_http: postgres $(INSTALL_PREFIX)/lib/postgresql/http.$(PG_DLSUFFIX)
+plsh: postgres $(INSTALL_PREFIX)/lib/postgresql/plsh.$(PG_DLSUFFIX)
 tigerfs: postgres $(INSTALL_PREFIX)/bin/tigerfs
 
 $(POSTGRES_SOURCE_VERIFIED): $(POSTGRES_BUNDLE_CONFIG_STAMP)
@@ -291,6 +314,36 @@ $(PG_NET_SOURCE_VERIFIED): $(POSTGRES_BUNDLE_CONFIG_STAMP)
 
 $(INSTALL_PREFIX)/lib/postgresql/pg_net.$(PG_DLSUFFIX): $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PG_NET_SOURCE_VERIFIED) $(INSTALL_PREFIX)/bin/postgres
 	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(PG_NET_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config CPPFLAGS="$(PG_NET_CURL_CPPFLAGS)" LDFLAGS="$(PG_NET_CURL_LDFLAGS)" -j && $(MAKE) -C $(PG_NET_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config CPPFLAGS="$(PG_NET_CURL_CPPFLAGS)" LDFLAGS="$(PG_NET_CURL_LDFLAGS)" install
+
+$(PGSQL_HTTP_DIR).tar.gz:
+	@set -eu; \
+	tmp="$@.tmp.$$$$"; trap 'rm -f "$$tmp"' EXIT HUP INT TERM; \
+	curl --fail --location --show-error --proto '=https' --proto-redir '=https' --retry 3 -o "$$tmp" "$(PGSQL_HTTP_URL)"; \
+	printf '%s  %s\n' '$(PGSQL_HTTP_SHA256)' "$$tmp" | $(SHA256_CMD) -c -; \
+	mv -f "$$tmp" "$@"
+
+$(PGSQL_HTTP_DIR)/Makefile: $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PGSQL_HTTP_DIR).tar.gz
+	printf '%s  %s\n' '$(PGSQL_HTTP_SHA256)' '$(PGSQL_HTTP_DIR).tar.gz' | $(SHA256_CMD) -c -
+	mkdir -p $(PGSQL_HTTP_DIR)
+	tar xzf $(PGSQL_HTTP_DIR).tar.gz -C $(PGSQL_HTTP_DIR) --strip-components=1
+	touch $@
+
+$(INSTALL_PREFIX)/lib/postgresql/http.$(PG_DLSUFFIX): $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PGSQL_HTTP_DIR)/Makefile $(INSTALL_PREFIX)/bin/postgres
+	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(PGSQL_HTTP_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config CURL_CONFIG="$(PGSQL_HTTP_CURL_CONFIG)" -j && $(MAKE) -C $(PGSQL_HTTP_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config CURL_CONFIG="$(PGSQL_HTTP_CURL_CONFIG)" install
+
+$(PLSH_SOURCE_VERIFIED): $(POSTGRES_BUNDLE_CONFIG_STAMP)
+	@set -eu; \
+	rm -rf "$(PLSH_DIR)"; \
+	git init "$(PLSH_DIR)"; \
+	git -C "$(PLSH_DIR)" remote add origin "$(PLSH_REPO)"; \
+	git -C "$(PLSH_DIR)" fetch --depth 1 origin "$(PLSH_COMMIT)"; \
+	git -C "$(PLSH_DIR)" checkout --detach FETCH_HEAD; \
+	test "$$(git -C "$(PLSH_DIR)" rev-parse HEAD)" = "$(PLSH_COMMIT)"; \
+	test -f "$(PLSH_DIR)/Makefile"; \
+	touch "$@"
+
+$(INSTALL_PREFIX)/lib/postgresql/plsh.$(PG_DLSUFFIX): $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PLSH_SOURCE_VERIFIED) $(INSTALL_PREFIX)/bin/postgres
+	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(PLSH_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config -j && $(MAKE) -C $(PLSH_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config install
 
 $(TIGERFS_CONFIG_STAMP): FORCE
 	@set -eu; \

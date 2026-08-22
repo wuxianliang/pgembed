@@ -35,7 +35,7 @@ Think of it like SQLite, but with the power of PostgreSQL. Just `pip install pge
 - **Graph ready**: Includes [Apache AGE](https://github.com/apache/age) for graph traversals and property graphs
 - **Text search ready**: Includes [psql_bm25s](https://github.com/Intelligent-Internet/psql_bm25s) for BM25-based full-text search with ranking
 - **Time-series ready**: Includes [TimescaleDB](https://github.com/timescale/timescaledb) for hypertables and time-series workloads
-- **Scheduling & HTTP**: Includes [pg_cron](https://github.com/citusdata/pg_cron) (job scheduler) and [pg_net](https://github.com/supabase/pg_net) (async HTTP client)
+- **Scheduling, HTTP & shell**: Includes [pg_cron](https://github.com/citusdata/pg_cron) (job scheduler), [pg_net](https://github.com/supabase/pg_net) (async HTTP client), [pgsql-http](https://github.com/pramsey/pgsql-http) (synchronous HTTP client), and [PL/sh](https://github.com/petere/plsh) (shell-script functions — run bash from SQL)
 
 ## Quick start
 
@@ -155,6 +155,8 @@ pgembed bundles a curated set of PostgreSQL extensions, built specifically for P
 | [TimescaleDB](https://github.com/timescale/timescaledb) | `timescaledb` | `timescaledb` | `timescaledb` | hypertables / time-series |
 | [pg_cron](https://github.com/citusdata/pg_cron) | `pg_cron` | `pg_cron` | `pg_cron` | job scheduler |
 | [pg_net](https://github.com/supabase/pg_net) | `pg_net` | `pg_net` | `pg_net` | async HTTP (requires libcurl) |
+| [pgsql-http](https://github.com/pramsey/pgsql-http) | `http` | `pgsql_http` | — | synchronous HTTP client (requires libcurl) |
+| [PL/sh](https://github.com/petere/plsh) | `plsh` | `plsh` | — | shell-script functions (untrusted; superuser) |
 
 `pgembed-pgvector` is also published as a standalone wheel; the rest are bundled into the base `pgembed` wheel.
 
@@ -167,12 +169,30 @@ import pgembed
 
 # Check which extensions are available
 print(pgembed.list_extensions())
-# {'pgvector': True, 'vectorchord': True, 'age': True, 'psql_bm25s': True, 'timescaledb': True, 'pg_cron': True, 'pg_net': True}
+# {'pgvector': True, 'vectorchord': True, 'age': True, 'psql_bm25s': True, 'timescaledb': True, 'pg_cron': True, 'pg_net': True, 'pgsql_http': True, 'plsh': True}
 
 # Check if a specific extension is available, then create it
 if pgembed.has_extension('vectorchord'):
     server.create_extension('vchord')
 ```
+
+### Running shell commands from SQL
+
+PL/sh functions are shell scripts; stdout is the return value. Note the script must start with `#!` on the first line (only blank lines may precede it), and a non-zero exit raises a SQL error:
+
+```python
+server.create_extension('plsh')
+server.psql("""
+CREATE FUNCTION run_bash(text) RETURNS text AS $$
+#!/bin/bash
+out=$(eval "$1" 2>&1); rc=$?
+printf '%s\n[exit:%d]' "$out" "$rc"
+$$ LANGUAGE plsh;
+SELECT run_bash('ls -la | head -3');
+""")
+```
+
+PL/sh is an untrusted language: only superusers may define functions (the bundled server runs as superuser), so every function is arbitrary command execution on the database host.
 
 ### Platform Support
 
@@ -180,7 +200,7 @@ pgembed's release pipeline is Darwin/Linux-only:
 
 - **macOS:** arm64 only, with deployment target **26.0**. The project does not claim Intel, universal2, or older macOS compatibility.
 - **Linux:** x86_64 and aarch64.
-- **Extensions:** the bundled extension set is built for those release targets. `pg_net` additionally requires libcurl during the build (`libcurl-dev` / `libcurl-devel`, or `curl-dev` on Alpine-like development hosts).
+- **Extensions:** the bundled extension set is built for those release targets. `pg_net` and `pgsql_http` additionally require libcurl during the build (`libcurl-dev` / `libcurl-devel`, or `curl-dev` on Alpine-like development hosts).
 - **TigerFS** *(companion tool, not an extension)*: uses NFS on macOS and FUSE on Linux. Linux mounts require usable `/dev/fuse` access, so mount tests are normally unavailable in default containers, Google Colab, and other unprivileged sandboxes unless the host grants the needed device/capability. The embedded database and non-mount TigerFS package tests do not require FUSE.
 
 ### Preload before start
@@ -226,8 +246,14 @@ make pg_cron
 # Build only pg_net (needs libcurl)
 make pg_net
 
+# Build only pgsql_http (needs libcurl)
+make pgsql_http
+
+# Build only plsh
+make plsh
+
 # Build specific combination
-make EXTENSIONS="pgvector vectorchord timescaledb pg_cron pg_net" all
+make EXTENSIONS="pgvector vectorchord timescaledb pg_cron pg_net pgsql_http plsh" all
 ```
 
 ## History

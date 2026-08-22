@@ -50,6 +50,8 @@ EXTENSION_PACKAGES = {
     "timescaledb": None,
     "pg_cron": None,
     "pg_net": None,
+    "pgsql_http": None,
+    "plsh": None,
 }
 
 EXTENSION_ARTIFACT_STEMS = {
@@ -65,6 +67,8 @@ EXTENSION_SO_FILES = {
     "timescaledb": ("timescaledb.dylib", "timescaledb.so", "timescaledb.dll"),
     "pg_cron": ("pg_cron.dylib", "pg_cron.so", "pg_cron.dll"),
     "pg_net": ("pg_net.dylib", "pg_net.so", "pg_net.dll"),
+    "pgsql_http": ("http.dylib", "http.so", "http.dll"),
+    "plsh": ("plsh.dylib", "plsh.so", "plsh.dll"),
 }
 
 EXTENSION_PRECEDENCE: dict[str, tuple[str, ...]] = {}
@@ -219,6 +223,8 @@ def get_extension_create_name(name: str) -> str:
         "timescaledb": "timescaledb",
         "pg_cron": "pg_cron",
         "pg_net": "pg_net",
+        "pgsql_http": "http",
+        "plsh": "plsh",
     }.get(name, name)
 
 

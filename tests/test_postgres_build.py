@@ -76,6 +76,7 @@ def test_identical_stamp_preserves_mtime_and_complete_prefix(tmp_path: Path) -> 
         ("EXTENSIONS", "pgvector"),
         ("PSQL_BM25S_ICU_PREFIX", "/fixture/icu"),
         ("PG_NET_CURL_PREFIX", "/fixture/curl"),
+        ("PGSQL_HTTP_CURL_CONFIG", "/fixture/curl-config"),
     ],
 )
 def test_identity_changes_invalidate_prefix(
@@ -145,6 +146,8 @@ def test_source_lock_and_toolchain_are_recorded(tmp_path: Path) -> None:
     assert "cargo_pgrx_version=0.17.0" in text
     assert "psql_bm25s_icu_prefix=" in text
     assert "pg_net_curl_prefix=" in text
+    assert "pgsql_http_curl_config=" in text
+    assert "plsh=" in text
     assert "pg_duckdb" not in text
 
 
@@ -156,6 +159,7 @@ def test_all_git_sources_use_verification_markers() -> None:
         "PSQL_BM25S_SOURCE_VERIFIED",
         "PG_CRON_SOURCE_VERIFIED",
         "PG_NET_SOURCE_VERIFIED",
+        "PLSH_SOURCE_VERIFIED",
     )
     for marker in markers:
         assert f"$({marker}): $(POSTGRES_BUNDLE_CONFIG_STAMP)" in makefile

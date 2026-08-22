@@ -492,6 +492,8 @@ class PostgresServer:
             "timescaledb": "timescaledb",
             "pg_cron": "pg_cron",
             "pg_net": "pg_net",
+            "http": "pgsql_http",
+            "plsh": "plsh",
         }
         package_name = extension_map.get(extension_name, extension_name)
         if not pgembed.has_extension(package_name):
