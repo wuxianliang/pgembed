@@ -64,16 +64,20 @@ PY
     echo "relativized install names under $PREFIX"
 elif [ "$PLATFORM" = "Linux" ]; then
     command -v patchelf >/dev/null || { echo "patchelf not found" >&2; exit 1; }
+    # Statically linked ELF payloads (tigerfs is a static Go binary) have no
+    # .dynamic section; patchelf refuses them, so skip those per file.
     find "$PREFIX/bin" -type f -exec file {} \; 2>/dev/null | grep 'ELF' | cut -d: -f1 |
-        xargs -r -n1 patchelf --set-rpath '$ORIGIN/../lib'
+        while IFS= read -r elf; do
+            patchelf --set-rpath '$ORIGIN/../lib' "$elf" 2>/dev/null || true
+        done
     # lib/: bundled siblings in the same directory (libecpg -> libpgtypes).
     find "$PREFIX/lib" -maxdepth 1 -name '*.so*' | while IFS= read -r so; do
-        patchelf --set-rpath '$ORIGIN' "$so"
+        patchelf --set-rpath '$ORIGIN' "$so" 2>/dev/null || true
     done
     # lib/postgresql/: extensions resolve ICU (same directory) and libpq
     # (one level up), so they need both origins.
     find "$PREFIX/lib/postgresql" -name '*.so*' | while IFS= read -r so; do
-        patchelf --set-rpath '$ORIGIN:$ORIGIN/..' "$so"
+        patchelf --set-rpath '$ORIGIN:$ORIGIN/..' "$so" 2>/dev/null || true
     done
     echo "relativized rpaths under $PREFIX"
 else
