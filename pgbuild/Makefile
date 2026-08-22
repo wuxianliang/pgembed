@@ -17,7 +17,7 @@ HAS_LIBCURL ?= $(shell if command -v curl-config >/dev/null 2>&1 || [ "$(HOST_OS
 LIBC_NAME := $(if $(filter 1,$(IS_MUSL)),musl,$(if $(filter Linux,$(HOST_OS)),glibc,system))
 PG_DLSUFFIX := $(if $(filter Darwin,$(HOST_OS)),dylib,so)
 SHA256_CMD := $(if $(filter Darwin,$(HOST_OS)),shasum -a 256,sha256sum)
-POSTGRES_CONFIGURE_FLAGS := --without-readline --without-icu
+POSTGRES_CONFIGURE_FLAGS := --without-readline --without-icu --with-libxml
 MACOSX_DEPLOYMENT_TARGET ?=
 
 RUST_TOOLCHAIN := 1.95.0

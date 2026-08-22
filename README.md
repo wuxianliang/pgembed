@@ -28,6 +28,7 @@ Think of it like SQLite, but with the power of PostgreSQL. Just `pip install pge
 
 - **Bundled PostgreSQL runtime**: Current release artifacts target Darwin/Linux only: macOS arm64 (deployment target 26.0) and Linux x86_64/aarch64
 - **No external PostgreSQL setup**: The database runtime is packaged with pgembed and does not require a separately managed server
+- **XML support built in**: `--with-libxml` — the `xml` type, `xpath()`, `XMLTABLE`, and the XML functions work out of the box
 - **Container-friendly core database**: SQL access works in containers and sandboxes; TigerFS filesystem mounts additionally require the host mount facility described below
 - **Simple initialization**: `pgembed.get_server(MY_DATA_DIR)` handles `initdb`, port management, and process cleanup automatically
 - **Filesystem access**: Includes [TigerFS](https://github.com/timescale/tigerfs) to mount your database as a filesystem — read and write the same data with SQL or with `ls`/`cat`/`grep`

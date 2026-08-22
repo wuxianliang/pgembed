@@ -173,10 +173,10 @@ jobs:
           CIBW_BEFORE_ALL_LINUX: |
             set -e
             if command -v yum &> /dev/null; then
-              yum install -y ccache jq gcc openssl-devel zlib-devel llvm-devel clang-devel pkg-config cmake ninja-build libcurl-devel libicu-devel glib2-devel flex bison
+              yum install -y ccache jq gcc openssl-devel zlib-devel libxml2-devel llvm-devel clang-devel pkg-config cmake ninja-build libcurl-devel libicu-devel glib2-devel flex bison
             elif command -v apt-get &> /dev/null; then
               apt-get update
-              apt-get install -y ccache jq gcc libssl-dev zlib1g-dev llvm-dev clang-dev pkg-config cmake ninja-build libcurl4-openssl-dev libicu-dev libglib2.0-dev flex bison
+              apt-get install -y ccache jq gcc libssl-dev zlib1g-dev libxml2-dev llvm-dev clang-dev pkg-config cmake ninja-build libcurl4-openssl-dev libicu-dev libglib2.0-dev flex bison
             fi
             # pg_net >= 0.20 needs the libcurl 7.83+ API; distro libcurls are
             # older, so build a private curl. auditwheel vendors the resulting
