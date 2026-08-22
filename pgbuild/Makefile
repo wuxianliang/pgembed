@@ -115,6 +115,28 @@ PG_NET_CURL_PREFIX ?=
 PG_NET_CURL_CPPFLAGS := $(if $(PG_NET_CURL_PREFIX),-I$(PG_NET_CURL_PREFIX)/include,) -D_GNU_SOURCE
 PG_NET_CURL_LDFLAGS := $(if $(PG_NET_CURL_PREFIX),-L$(PG_NET_CURL_PREFIX)/lib,)
 
+# On Linux the private curl must ship inside the install prefix: if the wheel
+# only references it, auditwheel vendors whatever libcurl.so.4 the container
+# resolves by default (7.61 on AlmaLinux 8), which lacks the
+# curl_url_strerror/curl_easy_nextheader symbols pg_net needs at load time.
+# macOS links the system libcurl straight into the white-listed /usr/lib.
+PGEMBED_BUNDLES_CURL := 0
+ifeq ($(HOST_OS),Linux)
+ifneq ($(PG_NET_CURL_PREFIX),)
+PGEMBED_BUNDLES_CURL := 1
+endif
+endif
+ifneq ($(PGEMBED_BUNDLES_CURL),0)
+$(INSTALL_PREFIX)/lib/libcurl.so.4: $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PG_NET_SOURCE_VERIFIED) $(INSTALL_PREFIX)/bin/postgres
+	@set -eu; \
+	mkdir -p "$(INSTALL_PREFIX)/lib"; \
+	cp -P "$(PG_NET_CURL_PREFIX)/lib/libcurl.so.4"* "$(INSTALL_PREFIX)/lib/"
+CURL_BUNDLE_DEP := $(INSTALL_PREFIX)/lib/libcurl.so.4
+PG_NET_CURL_LDFLAGS := -L$(INSTALL_PREFIX)/lib $(PG_NET_CURL_LDFLAGS)
+else
+CURL_BUNDLE_DEP :=
+endif
+
 PGSQL_HTTP_TAG := v1.7.0
 PGSQL_HTTP_SHA256 := d0330cbf32b37be3bd7ce52919439c903a6f4e88e99e359de2db4050bc3ef726
 PGSQL_HTTP_URL := https://github.com/pramsey/pgsql-http/archive/refs/tags/$(PGSQL_HTTP_TAG).tar.gz
@@ -186,6 +208,7 @@ $(POSTGRES_BUNDLE_CONFIG_STAMP): FORCE
 		'pg_cron=$(PG_CRON_TAG):$(PG_CRON_COMMIT)' \
 		'pg_net=$(PG_NET_TAG):$(PG_NET_COMMIT)' \
 		'pg_net_curl_prefix=$(PG_NET_CURL_PREFIX)' \
+		'curl_bundled_in_prefix=$(PGEMBED_BUNDLES_CURL)' \
 		'pg_net_curl_cppflags=$(PG_NET_CURL_CPPFLAGS)' \
 		'pg_net_curl_ldflags=$(PG_NET_CURL_LDFLAGS)' \
 		'pgsql_http=$(PGSQL_HTTP_TAG):$(PGSQL_HTTP_SHA256)' \
@@ -346,7 +369,7 @@ $(PG_NET_SOURCE_VERIFIED): $(POSTGRES_BUNDLE_CONFIG_STAMP)
 	test -f "$(PG_NET_DIR)/Makefile"; \
 	touch "$@"
 
-$(INSTALL_PREFIX)/lib/postgresql/pg_net.$(PG_DLSUFFIX): $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PG_NET_SOURCE_VERIFIED) $(INSTALL_PREFIX)/bin/postgres
+$(INSTALL_PREFIX)/lib/postgresql/pg_net.$(PG_DLSUFFIX): $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PG_NET_SOURCE_VERIFIED) $(CURL_BUNDLE_DEP) $(INSTALL_PREFIX)/bin/postgres
 	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(PG_NET_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config CPPFLAGS="$(PG_NET_CURL_CPPFLAGS)" LDFLAGS="$(PG_NET_CURL_LDFLAGS)" -j$(BUILD_JOBS) && $(MAKE) -C $(PG_NET_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config CPPFLAGS="$(PG_NET_CURL_CPPFLAGS)" LDFLAGS="$(PG_NET_CURL_LDFLAGS)" install
 
 $(PGSQL_HTTP_DIR).tar.gz:
@@ -362,8 +385,8 @@ $(PGSQL_HTTP_DIR)/Makefile: $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PGSQL_HTTP_DIR).ta
 	tar xzf $(PGSQL_HTTP_DIR).tar.gz -C $(PGSQL_HTTP_DIR) --strip-components=1
 	touch $@
 
-$(INSTALL_PREFIX)/lib/postgresql/http.$(PG_DLSUFFIX): $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PGSQL_HTTP_DIR)/Makefile $(INSTALL_PREFIX)/bin/postgres
-	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(PGSQL_HTTP_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config CURL_CONFIG="$(PGSQL_HTTP_CURL_CONFIG)" -j$(BUILD_JOBS) && $(MAKE) -C $(PGSQL_HTTP_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config CURL_CONFIG="$(PGSQL_HTTP_CURL_CONFIG)" install
+$(INSTALL_PREFIX)/lib/postgresql/http.$(PG_DLSUFFIX): $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PGSQL_HTTP_DIR)/Makefile $(CURL_BUNDLE_DEP) $(INSTALL_PREFIX)/bin/postgres
+	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(PGSQL_HTTP_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config CURL_CONFIG="$(PGSQL_HTTP_CURL_CONFIG)" LDFLAGS="$(if $(CURL_BUNDLE_DEP),-L$(INSTALL_PREFIX)/lib,)" -j$(BUILD_JOBS) && $(MAKE) -C $(PGSQL_HTTP_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config CURL_CONFIG="$(PGSQL_HTTP_CURL_CONFIG)" LDFLAGS="$(if $(CURL_BUNDLE_DEP),-L$(INSTALL_PREFIX)/lib,)" install
 
 $(PLSH_SOURCE_VERIFIED): $(POSTGRES_BUNDLE_CONFIG_STAMP)
 	@set -eu; \
