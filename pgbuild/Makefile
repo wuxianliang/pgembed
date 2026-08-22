@@ -408,6 +408,10 @@ relativize: postgres $(EXTENSIONS)
 
 bundle-metadata: postgres $(EXTENSIONS) relativize
 	rm -f "$(BUNDLE_COMPLETION_MARKER)" "$(INSTALL_PREFIX)/share/pgembed/build-metadata.json"
+	# The stamp travels inside the payload: cibuildwheel copies (not mounts)
+	# the project into its build containers, so anything left outside the
+	# install prefix never reaches the wheel or the host.
+	cp "$(POSTGRES_BUNDLE_CONFIG_STAMP)" "$(INSTALL_PREFIX)/share/pgembed/postgres-bundle-config.stamp"
 	python3 ../tools/generate_bundle_metadata.py \
 		--install-prefix "$(INSTALL_PREFIX)" \
 		--output "$(INSTALL_PREFIX)/share/pgembed/build-metadata.json" \
