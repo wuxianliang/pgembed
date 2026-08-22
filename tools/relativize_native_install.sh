@@ -79,6 +79,12 @@ elif [ "$PLATFORM" = "Linux" ]; then
     find "$PREFIX/lib/postgresql" -name '*.so*' | while IFS= read -r so; do
         patchelf --set-rpath '$ORIGIN:$ORIGIN/..' "$so" 2>/dev/null || true
     done
+    # lib/postgresql/pgxs/src/test/{regress,isolation}/: developer test
+    # binaries (pg_regress, isolationtester) link libpq five levels up.
+    find "$PREFIX/lib/postgresql/pgxs/src/test" -type f -exec file {} \; 2>/dev/null |
+        grep 'ELF' | cut -d: -f1 | while IFS= read -r elf; do
+            patchelf --set-rpath '$ORIGIN/../../../../..' "$elf" 2>/dev/null || true
+        done
     echo "relativized rpaths under $PREFIX"
 else
     echo "unsupported platform: $PLATFORM" >&2
