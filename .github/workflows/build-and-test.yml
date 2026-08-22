@@ -140,7 +140,8 @@ jobs:
           EXTENSIONS: ${{ matrix.extensions }}
         run: |
           export PATH="$(pwd)/src/pgembed/pginstall/bin:$HOME/.cargo/bin:/opt/homebrew/opt/ccache/bin:$PATH"
-          export LDFLAGS="-L/opt/homebrew/lib -lssl -lcrypto"
+          # no LDFLAGS: see CIBW_ENVIRONMENT_MACOS — nothing in the bundle may
+          # link Homebrew OpenSSL or the wheel dependency audit rejects it
           export IS_MUSL=0
           cargo install cargo-pgrx --version "$CARGO_PGRX_VERSION" --locked
           make EXTENSIONS="$EXTENSIONS" build
@@ -156,6 +157,10 @@ jobs:
         env:
           CIBW_ARCHS: ${{ matrix.arch }}
           CIBW_BUILD: cp312-* cp313-* cp314-*
+          # cp3XX-* would also match musllinux containers, whose before_all
+          # environment has neither yum nor apt; musl builds are unsupported
+          # (vectorchord is skipped there) and not part of the release.
+          CIBW_SKIP: '*-musllinux_*'
           # cibuildwheel 4.x has no top-level CIBW_MANYLINUX option (it was
           # silently ignored and builds fell back to the 2_28 default); the
           # per-architecture image variables are the supported way to pick
@@ -186,6 +191,9 @@ jobs:
             # older, so build a private curl. auditwheel vendors the resulting
             # libcurl.so.4 into the wheel (not in the manylinux whitelist).
             bash /project/tools/build_curl.sh /usr/local/curl-pg
+            # openssl-sys (cargo-pgrx dependency) no longer accepts the 1.1.1
+            # in this image; point it at the OpenSSL 3 built above.
+            export OPENSSL_DIR=/usr/local/curl-pg/openssl
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.95.0
             export PATH="$HOME/.cargo/bin:/usr/lib/ccache:$PATH"
             rustup default 1.95.0
@@ -194,9 +202,14 @@ jobs:
             # no RUSTFLAGS target-features: AVX2/FMA produce an x86-64-v3
             # binary that auditwheel's manylinux policy rejects
             make EXTENSIONS="${{ matrix.extensions }}" build
-          CIBW_ENVIRONMENT_LINUX: PATH="$HOME/.cargo/bin:$PATH:/project/src/pgembed/pginstall/bin" EXTENSIONS="${{ matrix.extensions }}" RUSTUP_TOOLCHAIN=1.95.0 PG_NET_CURL_PREFIX=/usr/local/curl-pg PGSQL_HTTP_CURL_CONFIG=/usr/local/curl-pg/bin/curl-config
+          CIBW_ENVIRONMENT_LINUX: PATH="$HOME/.cargo/bin:$PATH:/project/src/pgembed/pginstall/bin" EXTENSIONS="${{ matrix.extensions }}" RUSTUP_TOOLCHAIN=1.95.0 OPENSSL_DIR=/usr/local/curl-pg/openssl PG_NET_CURL_PREFIX=/usr/local/curl-pg PGSQL_HTTP_CURL_CONFIG=/usr/local/curl-pg/bin/curl-config
           CIBW_ENVIRONMENT_MANYLINUX: LIBCLANG_PATH=/usr/lib64
-          CIBW_ENVIRONMENT_MACOS: PATH="$PWD/src/pgembed/pginstall/bin:$HOME/.cargo/bin:/opt/homebrew/opt/ccache/bin:$PATH" LDFLAGS="-L/opt/homebrew/lib -lssl -lcrypto" MACOSX_DEPLOYMENT_TARGET=${{ matrix.deployment-target }} EXTENSIONS="${{ matrix.extensions }}" RUSTUP_TOOLCHAIN=1.95.0 BINDGEN_EXTRA_CLANG_ARGS="$(pg_config --cppflags) -I$(xcrun --show-sdk-path)/usr/include -I/opt/homebrew/include"
+          # No LDFLAGS: "-lssl -lcrypto" here linked Homebrew OpenSSL into the
+          # postgres binary, delocate vendored it into the wheel, and the
+          # dependency audit then rejected its absolute install name. Nothing
+          # in the bundle needs OpenSSL on macOS (pg_net/pgsql-http use the
+          # system libcurl, which carries its own TLS).
+          CIBW_ENVIRONMENT_MACOS: PATH="$PWD/src/pgembed/pginstall/bin:$HOME/.cargo/bin:/opt/homebrew/opt/ccache/bin:$PATH" MACOSX_DEPLOYMENT_TARGET=${{ matrix.deployment-target }} EXTENSIONS="${{ matrix.extensions }}" RUSTUP_TOOLCHAIN=1.95.0 BINDGEN_EXTRA_CLANG_ARGS="$(pg_config --cppflags) -I$(xcrun --show-sdk-path)/usr/include -I/opt/homebrew/include"
           MACOSX_DEPLOYMENT_TARGET: ${{ matrix.deployment-target }}
         run: python -m cibuildwheel --output-dir wheelhouse
       - name: Audit repaired wheel native dependencies
