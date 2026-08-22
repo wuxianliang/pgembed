@@ -48,15 +48,31 @@ def _audit_elf(path: Path) -> None:
         raise RuntimeError(f"unresolved dynamic dependency in {path}")
 
 
+def _macho_install_name(path: Path) -> str | None:
+    """Return the image's own install name (LC_ID_DYLIB), if any.
+
+    ``otool -L`` lists the install name between the header line and the
+    actual dependencies for dylibs; delocate-recorded names can be absolute
+    build paths that never participate in resolution, so the audit must not
+    treat them as dependencies.
+    """
+    result = _run(["otool", "-D", str(path)])
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    return lines[1].strip() if len(lines) > 1 else None
+
+
 def _audit_macho(path: Path) -> None:
     result = _run(["otool", "-L", str(path)])
     output = (result.stdout + result.stderr).strip()
     print(f"\n[{path}]\n{output}")
     if result.returncode != 0:
         raise RuntimeError(f"otool -L failed for {path} with exit code {result.returncode}")
+    install_name = _macho_install_name(path)
     for line in result.stdout.splitlines()[1:]:
         dependency = line.strip().split(" ", 1)[0]
         if not dependency or not dependency.startswith("/"):
+            continue
+        if dependency == install_name:
             continue
         if dependency.startswith(("/usr/lib/", "/System/Library/")):
             continue

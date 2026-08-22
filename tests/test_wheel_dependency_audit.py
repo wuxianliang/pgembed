@@ -77,3 +77,26 @@ def test_macho_audit_rejects_homebrew_dependency(monkeypatch, tmp_path):
 
     with pytest.raises(RuntimeError, match="non-system absolute dependency"):
         audit._audit_macho(payload)
+
+
+def test_macho_audit_skips_install_name_entry(monkeypatch, tmp_path):
+    payload = tmp_path / "payload.dylib"
+    monkeypatch.setattr(
+        audit,
+        "_run",
+        lambda command: (
+            _completed(0, stdout=f"{payload}:\n/tmp/build/.dylibs/payload.dylib\n")
+            if command[1] == "-D"
+            else _completed(
+                0,
+                stdout=(
+                    f"{payload}:\n"
+                    "\t/tmp/build/.dylibs/payload.dylib (compatibility version 6.0.0)\n"
+                    "\t@loader_path/libhelper.dylib (compatibility version 1.0.0)\n"
+                    "\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0)\n"
+                ),
+            )
+        ),
+    )
+
+    audit._audit_macho(payload)

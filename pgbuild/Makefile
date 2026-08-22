@@ -164,6 +164,7 @@ $(POSTGRES_BUNDLE_CONFIG_STAMP): FORCE
 		'postgres_ref=$(POSTGRES_SRC_REF)' \
 		'postgres_commit=$(POSTGRES_SOURCE_COMMIT)' \
 		'postgres_configure=$(POSTGRES_CONFIGURE_FLAGS)' \
+		'install_relativize=v1' \
 		'install_prefix=$(abspath $(INSTALL_PREFIX))' \
 		'host_os=$(HOST_OS)' \
 		'host_arch=$(HOST_ARCH)' \
@@ -233,6 +234,7 @@ $(POSTGRES_BLD)/src/bin/initdb/initdb: $(POSTGRES_BUNDLE_CONFIG_STAMP) $(POSTGRE
 $(INSTALL_PREFIX)/bin/postgres: $(POSTGRES_BUNDLE_CONFIG_STAMP) $(POSTGRES_BLD)/src/bin/initdb/initdb
 	mkdir -p $(INSTALL_PREFIX)
 	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(POSTGRES_BLD) install
+	bash ../tools/relativize_native_install.sh $(INSTALL_PREFIX)
 
 $(PGVECTOR_DIR).tar.gz:
 	@set -eu; \
