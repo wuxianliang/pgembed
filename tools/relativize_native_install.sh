@@ -66,11 +66,14 @@ elif [ "$PLATFORM" = "Linux" ]; then
     command -v patchelf >/dev/null || { echo "patchelf not found" >&2; exit 1; }
     find "$PREFIX/bin" -type f -exec file {} \; 2>/dev/null | grep 'ELF' | cut -d: -f1 |
         xargs -r -n1 patchelf --set-rpath '$ORIGIN/../lib'
-    # Libraries (lib/, lib/postgresql/) resolve bundled siblings in the same
-    # directory: psql -> ../lib/libpq, libecpg -> ./libpgtypes, psql_bm25s
-    # -> ./libicuuc.
-    find "$PREFIX/lib" -name '*.so*' | while IFS= read -r so; do
+    # lib/: bundled siblings in the same directory (libecpg -> libpgtypes).
+    find "$PREFIX/lib" -maxdepth 1 -name '*.so*' | while IFS= read -r so; do
         patchelf --set-rpath '$ORIGIN' "$so"
+    done
+    # lib/postgresql/: extensions resolve ICU (same directory) and libpq
+    # (one level up), so they need both origins.
+    find "$PREFIX/lib/postgresql" -name '*.so*' | while IFS= read -r so; do
+        patchelf --set-rpath '$ORIGIN:$ORIGIN/..' "$so"
     done
     echo "relativized rpaths under $PREFIX"
 else

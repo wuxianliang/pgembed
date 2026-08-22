@@ -202,8 +202,8 @@ $(POSTGRES_BUNDLE_CONFIG_STAMP): FORCE
 	rm -rf "$(INSTALL_PREFIX)" $(NATIVE_BUILD_DIRS); \
 	mv -f "$$tmp" "$@"
 
-.PHONY: all postgres pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh tigerfs bundle-metadata
-all: postgres $(EXTENSIONS) bundle-metadata
+.PHONY: all postgres pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh tigerfs relativize bundle-metadata
+all: postgres $(EXTENSIONS) relativize bundle-metadata
 postgres: $(INSTALL_PREFIX)/bin/postgres
 pgvector: postgres $(INSTALL_PREFIX)/lib/postgresql/vector.$(PG_DLSUFFIX)
 vectorchord: postgres $(INSTALL_PREFIX)/lib/postgresql/vchord.$(PG_DLSUFFIX)
@@ -234,7 +234,6 @@ $(POSTGRES_BLD)/src/bin/initdb/initdb: $(POSTGRES_BUNDLE_CONFIG_STAMP) $(POSTGRE
 $(INSTALL_PREFIX)/bin/postgres: $(POSTGRES_BUNDLE_CONFIG_STAMP) $(POSTGRES_BLD)/src/bin/initdb/initdb
 	mkdir -p $(INSTALL_PREFIX)
 	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(POSTGRES_BLD) install
-	bash ../tools/relativize_native_install.sh $(INSTALL_PREFIX)
 
 $(PGVECTOR_DIR).tar.gz:
 	@set -eu; \
@@ -400,7 +399,14 @@ $(INSTALL_PREFIX)/bin/tigerfs: $(POSTGRES_BUNDLE_CONFIG_STAMP) $(TIGERFS_CONFIG_
 	tar xzf "$$tmp_archive" -C "$$tmp_dir" tigerfs; \
 	install -m 0755 "$$tmp_dir/tigerfs" "$$tmp_bin"; mv -f "$$tmp_bin" "$@"
 
-bundle-metadata: postgres $(EXTENSIONS)
+# Relativize only after every extension is installed: rewriting libpq's
+# install name earlier leaks the new name into extensions linked afterwards
+# (PGXS records the referenced dylib's install name verbatim), and those
+# live one directory deeper, so @loader_path would point at the wrong place.
+relativize: postgres $(EXTENSIONS)
+	bash ../tools/relativize_native_install.sh $(INSTALL_PREFIX)
+
+bundle-metadata: postgres $(EXTENSIONS) relativize
 	rm -f "$(BUNDLE_COMPLETION_MARKER)" "$(INSTALL_PREFIX)/share/pgembed/build-metadata.json"
 	python3 ../tools/generate_bundle_metadata.py \
 		--install-prefix "$(INSTALL_PREFIX)" \
