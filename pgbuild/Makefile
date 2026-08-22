@@ -67,10 +67,13 @@ VECTORCHORD_SHA256 := d70b5595bfc852f1f24c05c0a40272e7deecbb0ddf8ffdddec5afa42c2
 VECTORCHORD_URL := https://github.com/tensorchord/VectorChord/archive/refs/tags/$(VECTORCHORD_TAG).tar.gz
 VECTORCHORD_DIR := vectorchord-$(VECTORCHORD_TAG)
 
-AGE_TAG := release/PG18/1.8.0
+# Pinned by commit, not branch: apache/age's release/PG18/1.8.0 branch moved
+# upstream after this pin (b570cf7, a CI-only change), which broke the
+# branch-checkout verification in CI. The tag PG18/v1.8.0-rc0 points at this
+# commit for reference.
 AGE_COMMIT := e43dc1a12b78fba4acef9835b2b10379b8d243b4
 AGE_REPO := https://github.com/apache/age.git
-AGE_DIR := age-release_PG18_1.8.0
+AGE_DIR := age-$(AGE_COMMIT)
 AGE_SOURCE_VERIFIED := $(AGE_DIR)/.pgembed-source-verified
 AGE_BISON ?= $(shell if [ -x /opt/homebrew/opt/bison/bin/bison ]; then echo /opt/homebrew/opt/bison/bin/bison; elif [ -x /usr/local/opt/bison/bin/bison ]; then echo /usr/local/opt/bison/bin/bison; else command -v bison 2>/dev/null; fi)
 AGE_BISONFLAGS ?= --defines=src/include/parser/cypher_gram_def.h -Werror -Wno-error=conflicts-sr -Wno-error=conflicts-rr -Wno-error=deprecated -Wno-error=other
@@ -167,7 +170,7 @@ $(POSTGRES_BUNDLE_CONFIG_STAMP): FORCE
 		'skipped_extensions=$(SKIPPED_EXTENSIONS)' \
 		'pgvector=$(PGVECTOR_TAG):$(PGVECTOR_SHA256)' \
 		'vectorchord=$(VECTORCHORD_TAG):$(VECTORCHORD_SHA256)' \
-		'age=$(AGE_TAG):$(AGE_COMMIT)' \
+		'age=$(AGE_COMMIT)' \
 		'psql_bm25s=$(PSQL_BM25S_COMMIT)' \
 		'psql_bm25s_icu_prefix=$(PSQL_BM25S_ICU_PREFIX)' \
 		'psql_bm25s_ldflags=$(PSQL_BM25S_LDFLAGS)' \
@@ -263,7 +266,10 @@ endif
 $(AGE_SOURCE_VERIFIED): $(POSTGRES_BUNDLE_CONFIG_STAMP)
 	@set -eu; \
 	rm -rf "$(AGE_DIR)"; \
-	git clone --branch "$(AGE_TAG)" --single-branch "$(AGE_REPO)" "$(AGE_DIR)"; \
+	git init "$(AGE_DIR)"; \
+	git -C "$(AGE_DIR)" remote add origin "$(AGE_REPO)"; \
+	git -C "$(AGE_DIR)" fetch --depth 1 origin "$(AGE_COMMIT)"; \
+	git -C "$(AGE_DIR)" checkout --detach FETCH_HEAD; \
 	test "$$(git -C "$(AGE_DIR)" rev-parse HEAD)" = "$(AGE_COMMIT)"; \
 	test -f "$(AGE_DIR)/Makefile"; \
 	touch "$@"
