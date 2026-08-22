@@ -65,6 +65,8 @@ def test_release_bundle_contains_complete_attested_extension_set() -> None:
         "timescaledb",
         "pg_cron",
         "pg_net",
+        "pgsql_http",
+        "plsh",
     }
     assert set(metadata.extensions) == expected
 

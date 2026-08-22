@@ -159,10 +159,12 @@ jobs:
           # cibuildwheel 4.x has no top-level CIBW_MANYLINUX option (it was
           # silently ignored and builds fell back to the 2_28 default); the
           # per-architecture image variables are the supported way to pick
-          # the baseline. manylinux_2_34 is the newest image published for
-          # every architecture (2_39 exists only for aarch64/riscv64).
-          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_34
-          CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_34
+          # the baseline. Stay on manylinux_2_28: the 2_34 image's toolchain
+          # defaults to the x86-64-v2 ISA, which auditwheel's policy rejects
+          # ("depends on unsupported ISA extensions"), and 2_39 exists only
+          # for aarch64/riscv64 anyway.
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+          CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
           CIBW_BEFORE_ALL_MACOS: |
             brew install jq llvm cmake ninja openssl icu4c@78 curl bison
             export IS_MUSL=0
@@ -189,7 +191,8 @@ jobs:
             rustup default 1.95.0
             cargo install cargo-pgrx --version 0.17.0 --locked
             export IS_MUSL=0
-            if [ "$(uname -m)" = "x86_64" ]; then export RUSTFLAGS="-C target-feature=+avx2,+fma"; fi
+            # no RUSTFLAGS target-features: AVX2/FMA produce an x86-64-v3
+            # binary that auditwheel's manylinux policy rejects
             make EXTENSIONS="${{ matrix.extensions }}" build
           CIBW_ENVIRONMENT_LINUX: PATH="$HOME/.cargo/bin:$PATH:/project/src/pgembed/pginstall/bin" EXTENSIONS="${{ matrix.extensions }}" RUSTUP_TOOLCHAIN=1.95.0 PG_NET_CURL_PREFIX=/usr/local/curl-pg PGSQL_HTTP_CURL_CONFIG=/usr/local/curl-pg/bin/curl-config
           CIBW_ENVIRONMENT_MANYLINUX: LIBCLANG_PATH=/usr/lib64

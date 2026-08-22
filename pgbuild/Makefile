@@ -84,6 +84,12 @@ PSQL_BM25S_DIR := psql_bm25s-$(PSQL_BM25S_COMMIT)
 PSQL_BM25S_SOURCE_VERIFIED := $(PSQL_BM25S_DIR)/.pgembed-source-verified
 PSQL_BM25S_ICU_PREFIX ?= $(shell if [ -d /opt/homebrew/opt/icu4c@78 ]; then echo /opt/homebrew/opt/icu4c@78; elif [ -d /usr/local/opt/icu4c@78 ]; then echo /usr/local/opt/icu4c@78; fi)
 PSQL_BM25S_LDFLAGS := $(if $(PSQL_BM25S_ICU_PREFIX),-L$(PSQL_BM25S_ICU_PREFIX)/lib,) -licui18n -licuuc -licudata
+# The macOS SDK has no icu4c, so psql_bm25s links the Homebrew copy there.
+# Homebrew dylibs carry absolute install names, which the wheel dependency
+# audit rejects; after installing, copy the three ICU dylibs next to the
+# extension and rewrite the references to @loader_path (a hand-rolled
+# delocate). ICU's own cross-references already use @loader_path.
+PSQL_BM25S_RELOCATE_ICU := $(if $(filter Darwin,$(HOST_OS))$(PSQL_BM25S_ICU_PREFIX),1,)
 
 TIMESCALEDB_TAG := 2.27.1
 TIMESCALEDB_SHA256 := f0a940720bb5b0b635dae4d8aeceb13e83b196b8aab8717876af0f45efa47ab6
@@ -290,6 +296,18 @@ $(PSQL_BM25S_SOURCE_VERIFIED): $(POSTGRES_BUNDLE_CONFIG_STAMP)
 
 $(INSTALL_PREFIX)/lib/postgresql/psql_bm25s.$(PG_DLSUFFIX): $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PSQL_BM25S_SOURCE_VERIFIED) $(INSTALL_PREFIX)/bin/postgres
 	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(PSQL_BM25S_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config MAKEOVERRIDES= LDFLAGS="$(PSQL_BM25S_LDFLAGS)" -j$(BUILD_JOBS) && $(MAKE) -C $(PSQL_BM25S_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config MAKEOVERRIDES= LDFLAGS="$(PSQL_BM25S_LDFLAGS)" install
+ifeq ($(PSQL_BM25S_RELOCATE_ICU),1)
+	@set -eu; \
+	for name in libicui18n libicuuc libicudata; do \
+		dylib=$$(ls "$(PSQL_BM25S_ICU_PREFIX)/lib/$$name".*.dylib | head -n 1); \
+		base=$$(basename "$$dylib"); \
+		install -m 0755 "$$dylib" "$(INSTALL_PREFIX)/lib/postgresql/$$base"; \
+		install_name_tool -id "@loader_path/$$base" "$(INSTALL_PREFIX)/lib/postgresql/$$base"; \
+		install_name_tool -change "$$dylib" "@loader_path/$$base" "$(INSTALL_PREFIX)/lib/postgresql/psql_bm25s.$(PG_DLSUFFIX)"; \
+		codesign --force --sign - --timestamp=none "$(INSTALL_PREFIX)/lib/postgresql/$$base"; \
+		codesign --force --sign - --timestamp=none "$(INSTALL_PREFIX)/lib/postgresql/psql_bm25s.$(PG_DLSUFFIX)"; \
+	done
+endif
 
 $(TIMESCALEDB_DIR).tar.gz:
 	@set -eu; \
