@@ -411,6 +411,7 @@ bundle-metadata: postgres $(EXTENSIONS) relativize
 	# The stamp travels inside the payload: cibuildwheel copies (not mounts)
 	# the project into its build containers, so anything left outside the
 	# install prefix never reaches the wheel or the host.
+	mkdir -p "$(INSTALL_PREFIX)/share/pgembed"
 	cp "$(POSTGRES_BUNDLE_CONFIG_STAMP)" "$(INSTALL_PREFIX)/share/pgembed/postgres-bundle-config.stamp"
 	python3 ../tools/generate_bundle_metadata.py \
 		--install-prefix "$(INSTALL_PREFIX)" \
