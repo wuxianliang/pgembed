@@ -83,6 +83,7 @@ PSQL_BM25S_REPO := https://github.com/Intelligent-Internet/psql_bm25s.git
 PSQL_BM25S_DIR := psql_bm25s-$(PSQL_BM25S_COMMIT)
 PSQL_BM25S_SOURCE_VERIFIED := $(PSQL_BM25S_DIR)/.pgembed-source-verified
 PSQL_BM25S_ICU_PREFIX ?= $(shell if [ -d /opt/homebrew/opt/icu4c@78 ]; then echo /opt/homebrew/opt/icu4c@78; elif [ -d /usr/local/opt/icu4c@78 ]; then echo /usr/local/opt/icu4c@78; fi)
+PSQL_BM25S_ICU_MAJOR := $(lastword $(subst @, ,$(PSQL_BM25S_ICU_PREFIX)))
 PSQL_BM25S_LDFLAGS := $(if $(PSQL_BM25S_ICU_PREFIX),-L$(PSQL_BM25S_ICU_PREFIX)/lib,) -licui18n -licuuc -licudata
 # The macOS SDK has no icu4c, so psql_bm25s links the Homebrew copy there.
 # Homebrew dylibs carry absolute install names, which the wheel dependency
@@ -299,9 +300,9 @@ $(INSTALL_PREFIX)/lib/postgresql/psql_bm25s.$(PG_DLSUFFIX): $(POSTGRES_BUNDLE_CO
 ifeq ($(PSQL_BM25S_RELOCATE_ICU),1)
 	@set -eu; \
 	for name in libicui18n libicuuc libicudata; do \
-		dylib=$$(ls "$(PSQL_BM25S_ICU_PREFIX)/lib/$$name".*.dylib | head -n 1); \
+		dylib="$(PSQL_BM25S_ICU_PREFIX)/lib/$$name.$(PSQL_BM25S_ICU_MAJOR).dylib"; \
 		base=$$(basename "$$dylib"); \
-		install -m 0755 "$$dylib" "$(INSTALL_PREFIX)/lib/postgresql/$$base"; \
+		cp "$$dylib" "$(INSTALL_PREFIX)/lib/postgresql/$$base"; \
 		install_name_tool -id "@loader_path/$$base" "$(INSTALL_PREFIX)/lib/postgresql/$$base"; \
 		install_name_tool -change "$$dylib" "@loader_path/$$base" "$(INSTALL_PREFIX)/lib/postgresql/psql_bm25s.$(PG_DLSUFFIX)"; \
 		codesign --force --sign - --timestamp=none "$(INSTALL_PREFIX)/lib/postgresql/$$base"; \
