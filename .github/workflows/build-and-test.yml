@@ -156,7 +156,13 @@ jobs:
         env:
           CIBW_ARCHS: ${{ matrix.arch }}
           CIBW_BUILD: cp312-* cp313-* cp314-*
-          CIBW_MANYLINUX: manylinux_2_39
+          # cibuildwheel 4.x has no top-level CIBW_MANYLINUX option (it was
+          # silently ignored and builds fell back to the 2_28 default); the
+          # per-architecture image variables are the supported way to pick
+          # the baseline. manylinux_2_34 is the newest image published for
+          # every architecture (2_39 exists only for aarch64/riscv64).
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_34
+          CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_34
           CIBW_BEFORE_ALL_MACOS: |
             brew install jq llvm cmake ninja openssl icu4c@78 curl bison
             export IS_MUSL=0
@@ -167,11 +173,15 @@ jobs:
           CIBW_BEFORE_ALL_LINUX: |
             set -e
             if command -v yum &> /dev/null; then
-              yum install -y ccache jq gcc openssl-devel llvm-devel clang-devel pkg-config cmake ninja-build libcurl-devel libicu-devel glib2-devel flex bison
+              yum install -y ccache jq gcc openssl-devel zlib-devel llvm-devel clang-devel pkg-config cmake ninja-build libcurl-devel libicu-devel glib2-devel flex bison
             elif command -v apt-get &> /dev/null; then
               apt-get update
-              apt-get install -y ccache jq gcc libssl-dev llvm-dev clang-dev pkg-config cmake ninja-build libcurl4-openssl-dev libicu-dev libglib2.0-dev flex bison
+              apt-get install -y ccache jq gcc libssl-dev zlib1g-dev llvm-dev clang-dev pkg-config cmake ninja-build libcurl4-openssl-dev libicu-dev libglib2.0-dev flex bison
             fi
+            # pg_net >= 0.20 needs the libcurl 7.83+ API; distro libcurls are
+            # older, so build a private curl. auditwheel vendors the resulting
+            # libcurl.so.4 into the wheel (not in the manylinux whitelist).
+            bash /project/tools/build_curl.sh /usr/local/curl-pg
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.95.0
             export PATH="$HOME/.cargo/bin:/usr/lib/ccache:$PATH"
             rustup default 1.95.0
@@ -179,7 +189,7 @@ jobs:
             export IS_MUSL=0
             if [ "$(uname -m)" = "x86_64" ]; then export RUSTFLAGS="-C target-feature=+avx2,+fma"; fi
             make EXTENSIONS="${{ matrix.extensions }}" build
-          CIBW_ENVIRONMENT_LINUX: PATH="$HOME/.cargo/bin:$PATH:/project/src/pgembed/pginstall/bin" EXTENSIONS="${{ matrix.extensions }}" RUSTUP_TOOLCHAIN=1.95.0
+          CIBW_ENVIRONMENT_LINUX: PATH="$HOME/.cargo/bin:$PATH:/project/src/pgembed/pginstall/bin" EXTENSIONS="${{ matrix.extensions }}" RUSTUP_TOOLCHAIN=1.95.0 PG_NET_CURL_PREFIX=/usr/local/curl-pg PGSQL_HTTP_CURL_CONFIG=/usr/local/curl-pg/bin/curl-config
           CIBW_ENVIRONMENT_MANYLINUX: LIBCLANG_PATH=/usr/lib64
           CIBW_ENVIRONMENT_MACOS: PATH="$PWD/src/pgembed/pginstall/bin:$HOME/.cargo/bin:/opt/homebrew/opt/ccache/bin:$PATH" LDFLAGS="-L/opt/homebrew/lib -lssl -lcrypto" MACOSX_DEPLOYMENT_TARGET=${{ matrix.deployment-target }} EXTENSIONS="${{ matrix.extensions }}" RUSTUP_TOOLCHAIN=1.95.0 BINDGEN_EXTRA_CLANG_ARGS="$(pg_config --cppflags) -I$(xcrun --show-sdk-path)/usr/include -I/opt/homebrew/include"
           MACOSX_DEPLOYMENT_TARGET: ${{ matrix.deployment-target }}

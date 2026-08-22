@@ -24,6 +24,11 @@ RUST_TOOLCHAIN := 1.95.0
 CARGO_PGRX_VERSION := 0.17.0
 RUST_EXTENSIONS_SUPPORTED := $(if $(filter 1,$(IS_MUSL)),0,1)
 
+# Bounded parallelism. A bare `make -j` spawns an unbounded compiler fleet and
+# exhausts posix_spawn on constrained CI hosts ("Resource temporarily
+# unavailable"); cap every recursive native build at the CPU count (max 8).
+BUILD_JOBS ?= $(shell n=$$(sysctl -n hw.ncpu 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4); if [ $$n -gt 8 ]; then echo 8; else echo $$n; fi)
+
 ifeq ($(RUST_EXTENSIONS_SUPPORTED),1)
 EXTENSIONS ?= pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh tigerfs
 else
@@ -93,8 +98,11 @@ PG_NET_COMMIT := a8299b11182ea5c974f5e89ae83e70e9e44e9e8f
 PG_NET_REPO := https://github.com/supabase/pg_net.git
 PG_NET_DIR := pg_net-$(PG_NET_TAG)
 PG_NET_SOURCE_VERIFIED := $(PG_NET_DIR)/.pgembed-source-verified
-PG_NET_CURL_PREFIX ?= $(shell if [ -d /opt/homebrew/opt/curl ]; then echo /opt/homebrew/opt/curl; elif [ -d /usr/local/opt/curl ]; then echo /usr/local/opt/curl; fi)
-PG_NET_CURL_CPPFLAGS := $(if $(PG_NET_CURL_PREFIX),-I$(PG_NET_CURL_PREFIX)/include,)
+# pg_net >= 0.20 requires the libcurl 7.83+ API, so the prefix must point at a
+# curl new enough (the SDK/system libcurl on macOS, or the tree produced by
+# tools/build_curl.sh in CI containers). Empty means the toolchain defaults.
+PG_NET_CURL_PREFIX ?=
+PG_NET_CURL_CPPFLAGS := $(if $(PG_NET_CURL_PREFIX),-I$(PG_NET_CURL_PREFIX)/include,) -D_GNU_SOURCE
 PG_NET_CURL_LDFLAGS := $(if $(PG_NET_CURL_PREFIX),-L$(PG_NET_CURL_PREFIX)/lib,)
 
 PGSQL_HTTP_TAG := v1.7.0
@@ -210,7 +218,7 @@ $(POSTGRES_BLD)/config.status: $(POSTGRES_BUNDLE_CONFIG_STAMP) $(POSTGRES_SOURCE
 	cd $(POSTGRES_BLD) && ../$(POSTGRES_SRC)/configure --prefix=$(INSTALL_PREFIX) $(POSTGRES_CONFIGURE_FLAGS)
 
 $(POSTGRES_BLD)/src/bin/initdb/initdb: $(POSTGRES_BUNDLE_CONFIG_STAMP) $(POSTGRES_BLD)/config.status
-	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(POSTGRES_BLD) -j
+	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(POSTGRES_BLD) -j$(BUILD_JOBS)
 
 $(INSTALL_PREFIX)/bin/postgres: $(POSTGRES_BUNDLE_CONFIG_STAMP) $(POSTGRES_BLD)/src/bin/initdb/initdb
 	mkdir -p $(INSTALL_PREFIX)
@@ -230,7 +238,7 @@ $(PGVECTOR_DIR)/Makefile: $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PGVECTOR_DIR).tar.gz
 	touch $@
 
 $(INSTALL_PREFIX)/lib/postgresql/vector.$(PG_DLSUFFIX): $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PGVECTOR_DIR)/Makefile $(INSTALL_PREFIX)/bin/postgres
-	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(PGVECTOR_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config -j && $(MAKE) -C $(PGVECTOR_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config install
+	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(PGVECTOR_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config -j$(BUILD_JOBS) && $(MAKE) -C $(PGVECTOR_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config install
 
 $(VECTORCHORD_DIR).tar.gz:
 	@set -eu; \
@@ -261,7 +269,7 @@ $(AGE_SOURCE_VERIFIED): $(POSTGRES_BUNDLE_CONFIG_STAMP)
 	touch "$@"
 
 $(INSTALL_PREFIX)/lib/postgresql/age.$(PG_DLSUFFIX): $(POSTGRES_BUNDLE_CONFIG_STAMP) $(AGE_SOURCE_VERIFIED) $(INSTALL_PREFIX)/bin/postgres
-	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(AGE_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config BISON="$(AGE_BISON)" BISONFLAGS="$(AGE_BISONFLAGS)" -j && $(MAKE) -C $(AGE_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config BISON="$(AGE_BISON)" BISONFLAGS="$(AGE_BISONFLAGS)" install
+	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(AGE_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config BISON="$(AGE_BISON)" BISONFLAGS="$(AGE_BISONFLAGS)" -j$(BUILD_JOBS) && $(MAKE) -C $(AGE_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config BISON="$(AGE_BISON)" BISONFLAGS="$(AGE_BISONFLAGS)" install
 
 $(PSQL_BM25S_SOURCE_VERIFIED): $(POSTGRES_BUNDLE_CONFIG_STAMP)
 	@set -eu; \
@@ -275,7 +283,7 @@ $(PSQL_BM25S_SOURCE_VERIFIED): $(POSTGRES_BUNDLE_CONFIG_STAMP)
 	touch "$@"
 
 $(INSTALL_PREFIX)/lib/postgresql/psql_bm25s.$(PG_DLSUFFIX): $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PSQL_BM25S_SOURCE_VERIFIED) $(INSTALL_PREFIX)/bin/postgres
-	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(PSQL_BM25S_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config MAKEOVERRIDES= LDFLAGS="$(PSQL_BM25S_LDFLAGS)" -j && $(MAKE) -C $(PSQL_BM25S_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config MAKEOVERRIDES= LDFLAGS="$(PSQL_BM25S_LDFLAGS)" install
+	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(PSQL_BM25S_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config MAKEOVERRIDES= LDFLAGS="$(PSQL_BM25S_LDFLAGS)" -j$(BUILD_JOBS) && $(MAKE) -C $(PSQL_BM25S_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config MAKEOVERRIDES= LDFLAGS="$(PSQL_BM25S_LDFLAGS)" install
 
 $(TIMESCALEDB_DIR).tar.gz:
 	@set -eu; \
@@ -291,7 +299,7 @@ $(TIMESCALEDB_DIR)/bootstrap: $(POSTGRES_BUNDLE_CONFIG_STAMP) $(TIMESCALEDB_DIR)
 	touch $@
 
 $(INSTALL_PREFIX)/lib/postgresql/timescaledb.$(PG_DLSUFFIX): $(POSTGRES_BUNDLE_CONFIG_STAMP) $(TIMESCALEDB_DIR)/bootstrap $(INSTALL_PREFIX)/bin/postgres
-	unset MAKELEVEL MAKEFLAGS MFLAGS && export PATH="$(INSTALL_PREFIX)/bin:$$PATH" && cd $(TIMESCALEDB_DIR) && BUILD_FORCE_REMOVE=true ./bootstrap -DUSE_OPENSSL=0 && $(MAKE) -C build -j && $(MAKE) -C build install
+	unset MAKELEVEL MAKEFLAGS MFLAGS && export PATH="$(INSTALL_PREFIX)/bin:$$PATH" && cd $(TIMESCALEDB_DIR) && BUILD_FORCE_REMOVE=true ./bootstrap -DUSE_OPENSSL=0 && $(MAKE) -C build -j$(BUILD_JOBS) && $(MAKE) -C build install
 
 $(PG_CRON_SOURCE_VERIFIED): $(POSTGRES_BUNDLE_CONFIG_STAMP)
 	@set -eu; \
@@ -302,7 +310,7 @@ $(PG_CRON_SOURCE_VERIFIED): $(POSTGRES_BUNDLE_CONFIG_STAMP)
 	touch "$@"
 
 $(INSTALL_PREFIX)/lib/postgresql/pg_cron.$(PG_DLSUFFIX): $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PG_CRON_SOURCE_VERIFIED) $(INSTALL_PREFIX)/bin/postgres
-	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(PG_CRON_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config -j && $(MAKE) -C $(PG_CRON_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config install
+	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(PG_CRON_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config -j$(BUILD_JOBS) && $(MAKE) -C $(PG_CRON_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config install
 
 $(PG_NET_SOURCE_VERIFIED): $(POSTGRES_BUNDLE_CONFIG_STAMP)
 	@set -eu; \
@@ -313,7 +321,7 @@ $(PG_NET_SOURCE_VERIFIED): $(POSTGRES_BUNDLE_CONFIG_STAMP)
 	touch "$@"
 
 $(INSTALL_PREFIX)/lib/postgresql/pg_net.$(PG_DLSUFFIX): $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PG_NET_SOURCE_VERIFIED) $(INSTALL_PREFIX)/bin/postgres
-	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(PG_NET_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config CPPFLAGS="$(PG_NET_CURL_CPPFLAGS)" LDFLAGS="$(PG_NET_CURL_LDFLAGS)" -j && $(MAKE) -C $(PG_NET_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config CPPFLAGS="$(PG_NET_CURL_CPPFLAGS)" LDFLAGS="$(PG_NET_CURL_LDFLAGS)" install
+	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(PG_NET_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config CPPFLAGS="$(PG_NET_CURL_CPPFLAGS)" LDFLAGS="$(PG_NET_CURL_LDFLAGS)" -j$(BUILD_JOBS) && $(MAKE) -C $(PG_NET_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config CPPFLAGS="$(PG_NET_CURL_CPPFLAGS)" LDFLAGS="$(PG_NET_CURL_LDFLAGS)" install
 
 $(PGSQL_HTTP_DIR).tar.gz:
 	@set -eu; \
@@ -329,7 +337,7 @@ $(PGSQL_HTTP_DIR)/Makefile: $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PGSQL_HTTP_DIR).ta
 	touch $@
 
 $(INSTALL_PREFIX)/lib/postgresql/http.$(PG_DLSUFFIX): $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PGSQL_HTTP_DIR)/Makefile $(INSTALL_PREFIX)/bin/postgres
-	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(PGSQL_HTTP_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config CURL_CONFIG="$(PGSQL_HTTP_CURL_CONFIG)" -j && $(MAKE) -C $(PGSQL_HTTP_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config CURL_CONFIG="$(PGSQL_HTTP_CURL_CONFIG)" install
+	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(PGSQL_HTTP_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config CURL_CONFIG="$(PGSQL_HTTP_CURL_CONFIG)" -j$(BUILD_JOBS) && $(MAKE) -C $(PGSQL_HTTP_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config CURL_CONFIG="$(PGSQL_HTTP_CURL_CONFIG)" install
 
 $(PLSH_SOURCE_VERIFIED): $(POSTGRES_BUNDLE_CONFIG_STAMP)
 	@set -eu; \
@@ -343,7 +351,7 @@ $(PLSH_SOURCE_VERIFIED): $(POSTGRES_BUNDLE_CONFIG_STAMP)
 	touch "$@"
 
 $(INSTALL_PREFIX)/lib/postgresql/plsh.$(PG_DLSUFFIX): $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PLSH_SOURCE_VERIFIED) $(INSTALL_PREFIX)/bin/postgres
-	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(PLSH_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config -j && $(MAKE) -C $(PLSH_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config install
+	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(PLSH_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config -j$(BUILD_JOBS) && $(MAKE) -C $(PLSH_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config install
 
 $(TIGERFS_CONFIG_STAMP): FORCE
 	@set -eu; \

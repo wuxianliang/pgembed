@@ -200,7 +200,7 @@ pgembed's release pipeline is Darwin/Linux-only:
 
 - **macOS:** arm64 only, with deployment target **26.0**. The project does not claim Intel, universal2, or older macOS compatibility.
 - **Linux:** x86_64 and aarch64.
-- **Extensions:** the bundled extension set is built for those release targets. `pg_net` and `pgsql_http` additionally require libcurl during the build (`libcurl-dev` / `libcurl-devel`, or `curl-dev` on Alpine-like development hosts).
+- **Extensions:** the bundled extension set is built for those release targets. `pg_net` and `pgsql_http` additionally require **libcurl ≥ 7.83**: CI builds a private curl 8 via `tools/build_curl.sh` (auditwheel vendors `libcurl.so.4` into the Linux wheels); on macOS they link the SDK/system libcurl. Local Linux hosts need a curl that new, or run `tools/build_curl.sh` and pass `PG_NET_CURL_PREFIX` / `PGSQL_HTTP_CURL_CONFIG`.
 - **TigerFS** *(companion tool, not an extension)*: uses NFS on macOS and FUSE on Linux. Linux mounts require usable `/dev/fuse` access, so mount tests are normally unavailable in default containers, Google Colab, and other unprivileged sandboxes unless the host grants the needed device/capability. The embedded database and non-mount TigerFS package tests do not require FUSE.
 
 ### Preload before start
