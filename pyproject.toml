@@ -1,13 +1,13 @@
 [project]
 name = "pgembed" # Required
-version = "0.3.0rc1"  # PostgreSQL 18 pre-release
+version = "0.3.0rc2"  # PostgreSQL 18 pre-release
 description = "Self-contained postgres server for your python applications" # Required
 readme = "README.md" # Optional
 requires-python = ">=3.12"
 license = {file = "LICENSE"}
 urls={repository="https://github.com/Ladybug-Memory/pgembed"}
 authors=[{ name="Oscar Moll", email="orm@csail.mit.edu" }, { name="Arun Sharma", email="arun@sharma-home.net" }]
-keywords=["postgresql", "pgvector", "pgembed", "vectorchord", "timescaledb", "rag"]
+keywords=["postgresql", "pgvector", "pgembed", "vectorchord", "timescaledb", "pgmq", "rag"]
 dependencies = [
     "fasteners>=0.19",
     "platformdirs>=4.0.0",

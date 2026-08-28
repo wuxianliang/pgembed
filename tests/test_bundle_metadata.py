@@ -97,9 +97,119 @@ def test_schema_v1_metadata_loads(tmp_path: Path) -> None:
     assert metadata.extensions["pgvector"].built is True
     assert metadata.extensions["pgvector"].built_for_postgres_major == 18
     assert metadata.extensions["pgvector"].update_sql == ()
+    assert metadata.extensions["pgvector"].has_library is True
+    assert metadata.extensions["pgmq"].has_library is False
+    assert metadata.extensions["pgmq"].built is False
     assert BUNDLE_METADATA_PATH.parts[-4:] == (
         "pginstall", "share", "pgembed", "build-metadata.json"
     )
+
+
+def test_generator_records_firebird_fdw_client_dependencies(tmp_path: Path) -> None:
+    prefix = _prefix(tmp_path)
+    extension_dir = prefix / "share" / "postgresql" / "extension"
+    library = prefix / "lib" / "postgresql" / "firebird_fdw.dylib"
+    library.parent.mkdir(parents=True, exist_ok=True)
+    library.write_bytes(b"fixture")
+    (extension_dir / "firebird_fdw.control").write_text("default_version = '1.4.0'\n")
+    (extension_dir / "firebird_fdw--1.4.0.sql").write_text("-- fixture\n")
+    output = prefix / "bundle-metadata.json"
+    result = _generate(
+        prefix,
+        output,
+        requested="pgvector firebird_fdw",
+        built="pgvector firebird_fdw",
+    )
+    assert result.returncode == 0, result.stderr
+    metadata = load_bundle_metadata(output)
+    assert metadata is not None
+    extension = metadata.extensions["firebird_fdw"]
+    assert extension.built is True
+    assert extension.requires_preload is False
+    assert extension.preload_name is None
+    assert extension.create_name == "firebird_fdw"
+    assert extension.version == "1.4.2"
+    assert "libfq" in extension.source_submodules
+    assert "firebird-client" in extension.source_submodules
+
+
+def test_generator_records_sql_only_pgmq(tmp_path: Path) -> None:
+    prefix = _prefix(tmp_path)
+    extension_dir = prefix / "share" / "postgresql" / "extension"
+    (extension_dir / "pgmq.control").write_text("default_version = '1.12.0'\n")
+    (extension_dir / "pgmq--1.12.0.sql").write_text("-- fixture\n")
+    output = prefix / "bundle-metadata.json"
+    result = _generate(
+        prefix,
+        output,
+        requested="pgvector pgmq",
+        built="pgvector pgmq",
+    )
+    assert result.returncode == 0, result.stderr
+    metadata = load_bundle_metadata(output)
+    assert metadata is not None
+    extension = metadata.extensions["pgmq"]
+    assert extension.built is True
+    assert extension.library is None
+    assert extension.control == "share/postgresql/extension/pgmq.control"
+    assert extension.install_sql == "share/postgresql/extension/pgmq--1.12.0.sql"
+    assert extension.requires_preload is False
+    assert extension.preload_name is None
+    assert extension.create_name == "pgmq"
+    assert extension.version == "1.12.0"
+    assert extension.has_library is False
+    assert extension.source_sha256 == (
+        "e6bdbb2311a3bbf34439871a99ee1e5e87c79fdca2b1e6784411a51b079314d1"
+    )
+
+
+def test_native_built_extension_cannot_omit_library(tmp_path: Path) -> None:
+    prefix = _prefix(tmp_path)
+    output = prefix / "bundle-metadata.json"
+    assert _generate(prefix, output).returncode == 0
+    payload = json.loads(output.read_text())
+    payload["extensions"]["pgvector"]["library"] = None
+    output.write_text(json.dumps(payload))
+    with pytest.raises(BundledPostgresMetadataError, match="library is not recorded"):
+        load_bundle_metadata(output)
+
+    payload["extensions"]["pgvector"]["has_library"] = False
+    output.write_text(json.dumps(payload))
+    with pytest.raises(BundledPostgresMetadataError, match="cannot be SQL-only"):
+        load_bundle_metadata(output)
+
+
+def test_generator_rejects_sql_only_pgmq_with_native_library(tmp_path: Path) -> None:
+    prefix = _prefix(tmp_path)
+    extension_dir = prefix / "share" / "postgresql" / "extension"
+    (extension_dir / "pgmq.control").write_text("default_version = '1.12.0'\n")
+    (extension_dir / "pgmq--1.12.0.sql").write_text("-- fixture\n")
+    unexpected = prefix / "lib" / "postgresql" / "pgmq.dylib"
+    unexpected.write_bytes(b"stale")
+    output = prefix / "bundle-metadata.json"
+    result = _generate(
+        prefix,
+        output,
+        requested="pgvector pgmq",
+        built="pgvector pgmq",
+    )
+    assert result.returncode != 0
+    assert "SQL-only" in result.stderr
+    assert not output.exists()
+
+
+def test_generator_rejects_built_pgmq_without_control(tmp_path: Path) -> None:
+    prefix = _prefix(tmp_path)
+    output = prefix / "bundle-metadata.json"
+    result = _generate(
+        prefix,
+        output,
+        requested="pgvector pgmq",
+        built="pgvector pgmq",
+    )
+    assert result.returncode != 0
+    assert "pgmq.control" in result.stderr
+    assert not output.exists()
 
 
 def test_generator_records_base_install_and_update_chain(tmp_path: Path) -> None:

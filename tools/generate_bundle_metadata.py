@@ -29,6 +29,32 @@ EXTENSIONS: dict[str, dict[str, Any]] = {
     "pg_net": dict(version="0.20.5", source_ref="v0.20.5", source_commit="a8299b11182ea5c974f5e89ae83e70e9e44e9e8f", source_sha256=None, stem="pg_net", create_name="pg_net", preload_name="pg_net", requires_preload=True),
     "pgsql_http": dict(version="1.7", source_ref="v1.7.0", source_commit=None, source_sha256="d0330cbf32b37be3bd7ce52919439c903a6f4e88e99e359de2db4050bc3ef726", stem="http", create_name="http", preload_name=None, requires_preload=False),
     "plsh": dict(version="2", source_ref="8bcfab5a0f483fc7eda2ae93b6ef64d10565785c", source_commit="8bcfab5a0f483fc7eda2ae93b6ef64d10565785c", source_sha256=None, stem="plsh", create_name="plsh", preload_name=None, requires_preload=False),
+    "firebird_fdw": dict(
+        version="1.4.2",
+        source_ref="1.4.2",
+        source_commit=None,
+        source_sha256="0e76750b4b6ef1ebc125d0ed3d2b204e6e545bc7c1b1a8c6b3f712497138518b",
+        stem="firebird_fdw",
+        create_name="firebird_fdw",
+        preload_name=None,
+        requires_preload=False,
+        source_submodules={
+            "libfq": "0.6.2:d27fa0e0d1c58ee99e6344227067e6e96f81b98675ded631d10e32a69887e1b2",
+            "firebird-client": "5.0.3.1683-0",
+            "libtommath": "1.2.1:068adaf5155d28d4ac976eb95ea0df1ecb362f20d777287154c22a24fdb35faa",
+        },
+    ),
+    "pgmq": dict(
+        version="1.12.0",
+        source_ref="v1.12.0",
+        source_commit=None,
+        source_sha256="e6bdbb2311a3bbf34439871a99ee1e5e87c79fdca2b1e6784411a51b079314d1",
+        stem="pgmq",
+        create_name="pgmq",
+        preload_name=None,
+        requires_preload=False,
+        has_library=False,
+    ),
 }
 
 
@@ -183,13 +209,30 @@ def generate(args: argparse.Namespace) -> dict[str, Any]:
         is_built = name in built
         is_skipped = name in skipped
         stem = source["stem"]
+        has_library = source.get("has_library", True)
         library = lib_dir / f"{stem}.{suffix}"
         control = extension_dir / f"{stem}.control"
         sql_paths: tuple[Path, ...] = ()
         if is_built:
-            if not library.is_file() or not control.is_file():
+            if has_library:
+                if not library.is_file():
+                    raise FileNotFoundError(
+                        f"metadata says {name} was built, but {library} is missing"
+                    )
+            else:
+                unexpected_libraries = [
+                    lib_dir / f"{stem}.{extra_suffix}"
+                    for extra_suffix in ("so", "dylib", "dll")
+                    if (lib_dir / f"{stem}.{extra_suffix}").exists()
+                ]
+                if unexpected_libraries:
+                    raise ValueError(
+                        f"{name} is SQL-only but native library artifacts are present: "
+                        f"{', '.join(str(path) for path in unexpected_libraries)}"
+                    )
+            if not control.is_file():
                 raise FileNotFoundError(
-                    f"metadata says {name} was built, but {library} or {control} is missing"
+                    f"metadata says {name} was built, but {control} is missing"
                 )
             sql_paths = _installation_sql_paths(extension_dir, stem)
         else:
@@ -207,7 +250,8 @@ def generate(args: argparse.Namespace) -> dict[str, Any]:
             "create_name": source["create_name"],
             "preload_name": source["preload_name"],
             "requires_preload": source["requires_preload"],
-            "library": _relative(library, prefix) if is_built else None,
+            "has_library": has_library,
+            "library": _relative(library, prefix) if is_built and has_library else None,
             "control": _relative(control, prefix) if is_built else None,
             "install_sql": _relative(sql_paths[0], prefix) if sql_paths else None,
             "update_sql": [_relative(sql, prefix) for sql in sql_paths[1:]],

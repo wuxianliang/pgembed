@@ -67,6 +67,8 @@ def test_release_bundle_contains_complete_attested_extension_set() -> None:
         "pg_net",
         "pgsql_http",
         "plsh",
+        "firebird_fdw",
+        "pgmq",
     }
     assert set(metadata.extensions) == expected
 
@@ -77,15 +79,41 @@ def test_release_bundle_contains_complete_attested_extension_set() -> None:
         assert extension.built_for_postgres_major == 18
         assert extension.source_commit or extension.source_sha256
         assert pgembed.has_extension(name)
+        assert extension.control is not None
+        assert extension.install_sql is not None
+        if name == "pgmq":
+            assert extension.library is None
+        else:
+            assert extension.library is not None
         for relative in (
             extension.library,
             extension.control,
             extension.install_sql,
             *extension.update_sql,
         ):
-            assert relative is not None
+            if relative is None:
+                continue
             artifact = bundle_root / relative
             assert artifact.is_file(), f"attested artifact is missing for {name}: {artifact}"
+
+    pgmq = metadata.extensions["pgmq"]
+    assert pgmq.requires_preload is False
+    assert pgmq.preload_name is None
+    assert pgmq.create_name == "pgmq"
+    assert pgmq.version == "1.12.0"
+    assert pgmq.has_library is False
+    assert pgembed.get_extension_path("pgmq") is None
+
+    firebird = metadata.extensions["firebird_fdw"]
+    assert firebird.requires_preload is False
+    assert firebird.preload_name is None
+    assert firebird.create_name == "firebird_fdw"
+    assert firebird.source_submodules.get("libfq")
+    assert firebird.source_submodules.get("firebird-client")
+    lib_dir = bundle_root / "lib"
+    assert any(lib_dir.glob("libfbclient*")), "bundled libfbclient is missing"
+    assert any(lib_dir.glob("libfq*")), "bundled libfq is missing"
+    assert (bundle_root / "share" / "firebird" / "firebird.msg").is_file()
 
 
 def test_installed_wheel_rejects_pg17_pgdata_without_mutation(tmp_path: Path) -> None:

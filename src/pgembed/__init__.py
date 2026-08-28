@@ -52,6 +52,8 @@ EXTENSION_PACKAGES = {
     "pg_net": None,
     "pgsql_http": None,
     "plsh": None,
+    "firebird_fdw": None,
+    "pgmq": None,
 }
 
 EXTENSION_ARTIFACT_STEMS = {
@@ -69,6 +71,8 @@ EXTENSION_SO_FILES = {
     "pg_net": ("pg_net.dylib", "pg_net.so", "pg_net.dll"),
     "pgsql_http": ("http.dylib", "http.so", "http.dll"),
     "plsh": ("plsh.dylib", "plsh.so", "plsh.dll"),
+    "firebird_fdw": ("firebird_fdw.dylib", "firebird_fdw.so", "firebird_fdw.dll"),
+    "pgmq": (),
 }
 
 EXTENSION_PRECEDENCE: dict[str, tuple[str, ...]] = {}
@@ -110,18 +114,24 @@ def get_extension_install_sql_path(name: str) -> Optional[Path]:
 def _bundled_artifacts_are_complete(extension: ExtensionMetadata) -> tuple[bool, Optional[Path]]:
     if extension.built_for_postgres_major != BUNDLED_PG_MAJOR:
         return False, None
+    if not extension.control or not extension.install_sql:
+        return False, None
+    if extension.has_library:
+        if not extension.library:
+            return False, None
+    elif extension.library:
+        return False, None
     required = (
         extension.library,
         extension.control,
         extension.install_sql,
         *extension.update_sql,
     )
-    if not all(required):
-        return False, None
     paths = tuple(INSTALL_PATH / value for value in required if value is not None)
     if not all(path.is_file() for path in paths):
         return False, None
-    return True, paths[0]
+    library_path = INSTALL_PATH / extension.library if extension.library else None
+    return True, library_path
 
 
 def _legacy_artifacts_exist(name: str) -> bool:
@@ -188,9 +198,10 @@ def _detect_extensions() -> None:
             continue
         if extension.built:
             complete, library = _bundled_artifacts_are_complete(extension)
-            if complete and library is not None:
+            if complete:
                 AVAILABLE_EXTENSIONS[name] = True
-                _EXTENSION_PATHS[name] = library
+                if library is not None:
+                    _EXTENSION_PATHS[name] = library
                 continue
             _logger.warning("Metadata marks %s built, but required artifacts are incomplete", name)
             continue
@@ -225,6 +236,8 @@ def get_extension_create_name(name: str) -> str:
         "pg_net": "pg_net",
         "pgsql_http": "http",
         "plsh": "plsh",
+        "firebird_fdw": "firebird_fdw",
+        "pgmq": "pgmq",
     }.get(name, name)
 
 

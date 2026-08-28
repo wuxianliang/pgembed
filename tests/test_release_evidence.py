@@ -53,8 +53,8 @@ def test_generate_and_verify_release_evidence(tmp_path: Path) -> None:
     wheel_dir = tmp_path / "wheels"
     wheel_dir.mkdir()
     wheels = {
-        "pgembed-0.3.0rc1-cp312-test.whl": b"cp312 wheel",
-        "pgembed-0.3.0rc1-cp313-test.whl": b"cp313 wheel",
+        "pgembed-0.3.0rc2-cp312-test.whl": b"cp312 wheel",
+        "pgembed-0.3.0rc2-cp313-test.whl": b"cp313 wheel",
     }
     for name, content in wheels.items():
         (wheel_dir / name).write_bytes(content)

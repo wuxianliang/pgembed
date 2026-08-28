@@ -78,17 +78,17 @@ jobs:
             os: macos-latest
             arch: arm64
             deployment-target: '26.0' # minos 26.0. This does not claim compatibility with older macOS.
-            extensions: pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh tigerfs
+            extensions: pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq tigerfs
           - runner: ubuntu-latest
             os: ubuntu-latest
             arch: x86_64
             deployment-target: ''
-            extensions: pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh tigerfs
+            extensions: pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq tigerfs
           - runner: ubuntu-24.04-arm
             os: ubuntu-latest
             arch: aarch64
             deployment-target: ''
-            extensions: pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh tigerfs
+            extensions: pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq tigerfs
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -120,7 +120,7 @@ jobs:
           path: |
             pgbuild
             src/pgembed/pginstall
-          key: ${{ env.PG_BUILD_CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Makefile', 'pgbuild/Makefile', 'tools/generate_bundle_metadata.py', '.github/workflows/build-and-test.yml') }}
+          key: ${{ env.PG_BUILD_CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Makefile', 'pgbuild/Makefile', 'tools/generate_bundle_metadata.py', 'tools/build_firebird_fdw_deps.sh', '.github/workflows/build-and-test.yml') }}
       - name: Install Rust
         if: matrix.os != 'ubuntu-latest'
         run: |
@@ -152,7 +152,7 @@ jobs:
           path: |
             pgbuild
             src/pgembed/pginstall
-          key: ${{ env.PG_BUILD_CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Makefile', 'pgbuild/Makefile', 'tools/generate_bundle_metadata.py', '.github/workflows/build-and-test.yml') }}
+          key: ${{ env.PG_BUILD_CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Makefile', 'pgbuild/Makefile', 'tools/generate_bundle_metadata.py', 'tools/build_firebird_fdw_deps.sh', '.github/workflows/build-and-test.yml') }}
       - name: Build CPython 3.12-3.14 wheels
         env:
           CIBW_ARCHS: ${{ matrix.arch }}

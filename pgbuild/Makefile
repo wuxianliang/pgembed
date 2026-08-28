@@ -30,9 +30,9 @@ RUST_EXTENSIONS_SUPPORTED := $(if $(filter 1,$(IS_MUSL)),0,1)
 BUILD_JOBS ?= $(shell n=$$(sysctl -n hw.ncpu 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4); if [ $$n -gt 8 ]; then echo 8; else echo $$n; fi)
 
 ifeq ($(RUST_EXTENSIONS_SUPPORTED),1)
-EXTENSIONS ?= pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh tigerfs
+EXTENSIONS ?= pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq tigerfs
 else
-EXTENSIONS ?= pgvector age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh tigerfs
+EXTENSIONS ?= pgvector age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq tigerfs
 endif
 REQUESTED_EXTENSIONS := $(strip $(EXTENSIONS))
 UNSUPPORTED_EXTENSIONS :=
@@ -41,6 +41,9 @@ UNSUPPORTED_EXTENSIONS += pg_net pgsql_http
 endif
 ifeq ($(RUST_EXTENSIONS_SUPPORTED),0)
 UNSUPPORTED_EXTENSIONS += vectorchord
+endif
+ifeq ($(IS_MUSL),1)
+UNSUPPORTED_EXTENSIONS += firebird_fdw
 endif
 SKIPPED_EXTENSIONS := $(sort $(filter $(UNSUPPORTED_EXTENSIONS),$(REQUESTED_EXTENSIONS)))
 FINAL_EXTENSIONS := $(filter-out $(UNSUPPORTED_EXTENSIONS),$(REQUESTED_EXTENSIONS))
@@ -155,6 +158,49 @@ PLSH_REPO := https://github.com/petere/plsh.git
 PLSH_DIR := plsh-$(PLSH_COMMIT)
 PLSH_SOURCE_VERIFIED := $(PLSH_DIR)/.pgembed-source-verified
 
+# firebird_fdw is PGXS and needs libfq plus a Firebird client. Official
+# Firebird platform archives supply libfbclient (TigerFS-style prebuilts);
+# Linux tarballs omit libtommath.so.1, which we build privately.
+FIREBIRD_FDW_TAG := 1.4.2
+FIREBIRD_FDW_SHA256 := 0e76750b4b6ef1ebc125d0ed3d2b204e6e545bc7c1b1a8c6b3f712497138518b
+FIREBIRD_FDW_URL := https://github.com/ibarwick/firebird_fdw/archive/refs/tags/$(FIREBIRD_FDW_TAG).tar.gz
+FIREBIRD_FDW_DIR := firebird_fdw-$(FIREBIRD_FDW_TAG)
+LIBFQ_TAG := 0.6.2
+LIBFQ_SHA256 := d27fa0e0d1c58ee99e6344227067e6e96f81b98675ded631d10e32a69887e1b2
+LIBFQ_URL := https://github.com/ibarwick/libfq/archive/refs/tags/$(LIBFQ_TAG).tar.gz
+LIBFQ_DIR := libfq-$(LIBFQ_TAG)
+LIBTOMMATH_TAG := v1.2.1
+LIBTOMMATH_SHA256 := 068adaf5155d28d4ac976eb95ea0df1ecb362f20d777287154c22a24fdb35faa
+LIBTOMMATH_URL := https://github.com/libtom/libtommath/archive/refs/tags/$(LIBTOMMATH_TAG).tar.gz
+LIBTOMMATH_DIR := libtommath-1.2.1
+FIREBIRD_CLIENT_VERSION := 5.0.3.1683-0
+FIREBIRD_CLIENT_BASE := https://github.com/FirebirdSQL/firebird/releases/download/v5.0.3
+FIREBIRD_CLIENT_SHA256_Darwin_arm64 := 07e06ba4c0f13c9c39b65b854d1e66b59bfcfbd1513c22e753f2d32421cc7fad
+FIREBIRD_CLIENT_SHA256_Linux_x86_64 := ef281c53f85756288151a86831375c9ae668caaeccd1b18103d523ba8f444779
+FIREBIRD_CLIENT_SHA256_Linux_arm64 := e375341466e625bf17e4416723c1465a646d44903011ac4b89f84afe1df3633e
+ifeq ($(HOST_OS),Darwin)
+FIREBIRD_CLIENT_OS_ARCH := macos-$(if $(filter arm64 aarch64,$(HOST_ARCH)),arm64,x64)
+FIREBIRD_CLIENT_ARCHIVE := Firebird-$(FIREBIRD_CLIENT_VERSION)-$(FIREBIRD_CLIENT_OS_ARCH).pkg
+FIREBIRD_CLIENT_SHA256 := $(FIREBIRD_CLIENT_SHA256_Darwin_$(if $(filter arm64 aarch64,$(HOST_ARCH)),arm64,x86_64))
+else
+FIREBIRD_CLIENT_OS_ARCH := linux-$(if $(filter arm64 aarch64,$(HOST_ARCH)),arm64,x64)
+FIREBIRD_CLIENT_ARCHIVE := Firebird-$(FIREBIRD_CLIENT_VERSION)-$(FIREBIRD_CLIENT_OS_ARCH).tar.gz
+FIREBIRD_CLIENT_SHA256 := $(FIREBIRD_CLIENT_SHA256_Linux_$(if $(filter arm64 aarch64,$(HOST_ARCH)),arm64,x86_64))
+endif
+FIREBIRD_CLIENT_URL := $(FIREBIRD_CLIENT_BASE)/$(FIREBIRD_CLIENT_ARCHIVE)
+FIREBIRD_FDW_DEPS_DIR := firebird-fdw-deps
+FIREBIRD_FDW_DEPS_PREFIX ?= $(abspath $(FIREBIRD_FDW_DEPS_DIR))
+FIREBIRD_FDW_DEPS_STAMP := $(FIREBIRD_FDW_DEPS_PREFIX)/.pgembed-deps-complete
+FIREBIRD_FDW_DEPS_SCRIPT := ../tools/build_firebird_fdw_deps.sh
+FIREBIRD_FDW_DEPS_RECIPE := v1
+
+# pgmq is a SQL-only PGXS extension (PL/pgSQL, no shared library). Partitioned
+# queues optionally need pg_partman, which is not bundled.
+PGMQ_TAG := v1.12.0
+PGMQ_SHA256 := e6bdbb2311a3bbf34439871a99ee1e5e87c79fdca2b1e6784411a51b079314d1
+PGMQ_URL := https://github.com/pgmq/pgmq/archive/refs/tags/$(PGMQ_TAG).tar.gz
+PGMQ_DIR := pgmq-$(PGMQ_TAG)
+
 TIGERFS_TAG ?= v0.7.0
 TIGERFS_OS ?= $(HOST_OS)
 TIGERFS_ARCH ?= $(if $(filter arm64 aarch64,$(HOST_ARCH)),arm64,$(if $(filter x86_64 amd64,$(HOST_ARCH)),x86_64,$(error unsupported TIGERFS_ARCH for tigerfs: $(HOST_ARCH))))
@@ -167,7 +213,7 @@ TIGERFS_SHA256_Darwin_x86_64 := c62f7017e63750de4ae9375fb9becb1a50f0006ed44dfaee
 TIGERFS_EXPECTED_SHA256 := $(TIGERFS_SHA256_$(TIGERFS_OS)_$(TIGERFS_ARCH))
 TIGERFS_SELECTED := $(filter tigerfs,$(EXTENSIONS) $(MAKECMDGOALS))
 
-NATIVE_BUILD_DIRS := $(POSTGRES_SRC) $(POSTGRES_BLD) $(PGVECTOR_DIR) $(VECTORCHORD_DIR) $(AGE_DIR) $(PSQL_BM25S_DIR) $(TIMESCALEDB_DIR) $(PG_CRON_DIR) $(PG_NET_DIR) $(PGSQL_HTTP_DIR) $(PLSH_DIR)
+NATIVE_BUILD_DIRS := $(POSTGRES_SRC) $(POSTGRES_BLD) $(PGVECTOR_DIR) $(VECTORCHORD_DIR) $(AGE_DIR) $(PSQL_BM25S_DIR) $(TIMESCALEDB_DIR) $(PG_CRON_DIR) $(PG_NET_DIR) $(PGSQL_HTTP_DIR) $(PLSH_DIR) $(FIREBIRD_FDW_DIR) $(LIBFQ_DIR) $(LIBTOMMATH_DIR) $(FIREBIRD_FDW_DEPS_DIR) $(PGMQ_DIR)
 
 .PHONY: FORCE
 FORCE:
@@ -214,6 +260,13 @@ $(POSTGRES_BUNDLE_CONFIG_STAMP): FORCE
 		'pgsql_http=$(PGSQL_HTTP_TAG):$(PGSQL_HTTP_SHA256)' \
 		'pgsql_http_curl_config=$(PGSQL_HTTP_CURL_CONFIG)' \
 		'plsh=$(PLSH_COMMIT)' \
+		'firebird_fdw=$(FIREBIRD_FDW_TAG):$(FIREBIRD_FDW_SHA256)' \
+		'libfq=$(LIBFQ_TAG):$(LIBFQ_SHA256)' \
+		'libtommath=$(LIBTOMMATH_TAG):$(LIBTOMMATH_SHA256)' \
+		'firebird_client=$(FIREBIRD_CLIENT_VERSION):$(FIREBIRD_CLIENT_OS_ARCH):$(FIREBIRD_CLIENT_SHA256)' \
+		'firebird_fdw_deps_prefix=$(abspath $(FIREBIRD_FDW_DEPS_PREFIX))' \
+		'firebird_fdw_deps_recipe=$(FIREBIRD_FDW_DEPS_RECIPE)' \
+		'pgmq=$(PGMQ_TAG):$(PGMQ_SHA256)' \
 		'tigerfs=$(TIGERFS_TAG):$(TIGERFS_OS):$(TIGERFS_ARCH):$(TIGERFS_EXPECTED_SHA256)' \
 		'rust_toolchain=$(RUST_TOOLCHAIN)' \
 		'cargo_pgrx_version=$(CARGO_PGRX_VERSION)' > "$$tmp"; \
@@ -225,7 +278,7 @@ $(POSTGRES_BUNDLE_CONFIG_STAMP): FORCE
 	rm -rf "$(INSTALL_PREFIX)" $(NATIVE_BUILD_DIRS); \
 	mv -f "$$tmp" "$@"
 
-.PHONY: all postgres pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh tigerfs relativize bundle-metadata
+.PHONY: all postgres pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq tigerfs relativize bundle-metadata
 all: postgres $(EXTENSIONS) relativize bundle-metadata
 postgres: $(INSTALL_PREFIX)/bin/postgres
 pgvector: postgres $(INSTALL_PREFIX)/lib/postgresql/vector.$(PG_DLSUFFIX)
@@ -237,6 +290,13 @@ pg_cron: postgres $(INSTALL_PREFIX)/lib/postgresql/pg_cron.$(PG_DLSUFFIX)
 pg_net: postgres $(INSTALL_PREFIX)/lib/postgresql/pg_net.$(PG_DLSUFFIX)
 pgsql_http: postgres $(INSTALL_PREFIX)/lib/postgresql/http.$(PG_DLSUFFIX)
 plsh: postgres $(INSTALL_PREFIX)/lib/postgresql/plsh.$(PG_DLSUFFIX)
+ifeq ($(IS_MUSL),1)
+firebird_fdw:
+	$(error firebird_fdw is unsupported on musl)
+else
+firebird_fdw: postgres $(INSTALL_PREFIX)/lib/postgresql/firebird_fdw.$(PG_DLSUFFIX)
+endif
+pgmq: postgres $(INSTALL_PREFIX)/share/postgresql/extension/pgmq.control
 tigerfs: postgres $(INSTALL_PREFIX)/bin/tigerfs
 
 $(POSTGRES_SOURCE_VERIFIED): $(POSTGRES_BUNDLE_CONFIG_STAMP)
@@ -402,6 +462,92 @@ $(PLSH_SOURCE_VERIFIED): $(POSTGRES_BUNDLE_CONFIG_STAMP)
 $(INSTALL_PREFIX)/lib/postgresql/plsh.$(PG_DLSUFFIX): $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PLSH_SOURCE_VERIFIED) $(INSTALL_PREFIX)/bin/postgres
 	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(PLSH_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config -j$(BUILD_JOBS) && $(MAKE) -C $(PLSH_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config install
 
+$(FIREBIRD_FDW_DIR).tar.gz:
+	@set -eu; \
+	tmp="$@.tmp.$$$$"; trap 'rm -f "$$tmp"' EXIT HUP INT TERM; \
+	curl --fail --location --show-error --proto '=https' --proto-redir '=https' --retry 3 -o "$$tmp" "$(FIREBIRD_FDW_URL)"; \
+	printf '%s  %s\n' '$(FIREBIRD_FDW_SHA256)' "$$tmp" | $(SHA256_CMD) -c -; \
+	mv -f "$$tmp" "$@"
+
+$(FIREBIRD_FDW_DIR)/Makefile: $(POSTGRES_BUNDLE_CONFIG_STAMP) $(FIREBIRD_FDW_DIR).tar.gz
+	printf '%s  %s\n' '$(FIREBIRD_FDW_SHA256)' '$(FIREBIRD_FDW_DIR).tar.gz' | $(SHA256_CMD) -c -
+	mkdir -p $(FIREBIRD_FDW_DIR)
+	tar xzf $(FIREBIRD_FDW_DIR).tar.gz -C $(FIREBIRD_FDW_DIR) --strip-components=1
+	touch $@
+
+$(LIBFQ_DIR).tar.gz:
+	@set -eu; \
+	tmp="$@.tmp.$$$$"; trap 'rm -f "$$tmp"' EXIT HUP INT TERM; \
+	curl --fail --location --show-error --proto '=https' --proto-redir '=https' --retry 3 -o "$$tmp" "$(LIBFQ_URL)"; \
+	printf '%s  %s\n' '$(LIBFQ_SHA256)' "$$tmp" | $(SHA256_CMD) -c -; \
+	mv -f "$$tmp" "$@"
+
+$(LIBFQ_DIR)/configure: $(POSTGRES_BUNDLE_CONFIG_STAMP) $(LIBFQ_DIR).tar.gz
+	printf '%s  %s\n' '$(LIBFQ_SHA256)' '$(LIBFQ_DIR).tar.gz' | $(SHA256_CMD) -c -
+	mkdir -p $(LIBFQ_DIR)
+	tar xzf $(LIBFQ_DIR).tar.gz -C $(LIBFQ_DIR) --strip-components=1
+	touch $@
+
+$(LIBTOMMATH_DIR).tar.gz:
+	@set -eu; \
+	tmp="$@.tmp.$$$$"; trap 'rm -f "$$tmp"' EXIT HUP INT TERM; \
+	curl --fail --location --show-error --proto '=https' --proto-redir '=https' --retry 3 -o "$$tmp" "$(LIBTOMMATH_URL)"; \
+	printf '%s  %s\n' '$(LIBTOMMATH_SHA256)' "$$tmp" | $(SHA256_CMD) -c -; \
+	mv -f "$$tmp" "$@"
+
+$(LIBTOMMATH_DIR)/makefile.unix: $(POSTGRES_BUNDLE_CONFIG_STAMP) $(LIBTOMMATH_DIR).tar.gz
+	printf '%s  %s\n' '$(LIBTOMMATH_SHA256)' '$(LIBTOMMATH_DIR).tar.gz' | $(SHA256_CMD) -c -
+	mkdir -p $(LIBTOMMATH_DIR)
+	tar xzf $(LIBTOMMATH_DIR).tar.gz -C $(LIBTOMMATH_DIR) --strip-components=1
+	touch $@
+
+$(FIREBIRD_CLIENT_ARCHIVE):
+	@set -eu; \
+	if test -z "$(FIREBIRD_CLIENT_SHA256)"; then echo "no pinned SHA-256 for Firebird client $(FIREBIRD_CLIENT_OS_ARCH)" >&2; exit 1; fi; \
+	tmp="$@.tmp.$$$$"; trap 'rm -f "$$tmp"' EXIT HUP INT TERM; \
+	curl --fail --location --show-error --proto '=https' --proto-redir '=https' --retry 3 -o "$$tmp" "$(FIREBIRD_CLIENT_URL)"; \
+	printf '%s  %s\n' '$(FIREBIRD_CLIENT_SHA256)' "$$tmp" | $(SHA256_CMD) -c -; \
+	mv -f "$$tmp" "$@"
+
+$(FIREBIRD_FDW_DEPS_STAMP): $(POSTGRES_BUNDLE_CONFIG_STAMP) $(FIREBIRD_CLIENT_ARCHIVE) $(LIBFQ_DIR)/configure $(LIBTOMMATH_DIR)/makefile.unix $(FIREBIRD_FDW_DEPS_SCRIPT) $(INSTALL_PREFIX)/bin/postgres
+	@set -eu; \
+	printf '%s  %s\n' '$(FIREBIRD_CLIENT_SHA256)' '$(FIREBIRD_CLIENT_ARCHIVE)' | $(SHA256_CMD) -c -; \
+	bash ../tools/build_firebird_fdw_deps.sh \
+		--firebird-archive "$(abspath $(FIREBIRD_CLIENT_ARCHIVE))" \
+		--libfq-src "$(abspath $(LIBFQ_DIR))" \
+		--tommath-src "$(abspath $(LIBTOMMATH_DIR))" \
+		--deps-prefix "$(FIREBIRD_FDW_DEPS_PREFIX)" \
+		--install-prefix "$(abspath $(INSTALL_PREFIX))" \
+		--jobs "$(BUILD_JOBS)"; \
+	touch "$@"
+
+$(INSTALL_PREFIX)/lib/postgresql/firebird_fdw.$(PG_DLSUFFIX): $(POSTGRES_BUNDLE_CONFIG_STAMP) $(FIREBIRD_FDW_DIR)/Makefile $(FIREBIRD_FDW_DEPS_STAMP) $(INSTALL_PREFIX)/bin/postgres
+ifeq ($(IS_MUSL),1)
+	$(error firebird_fdw is unsupported on musl)
+else
+	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(FIREBIRD_FDW_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config PG_CPPFLAGS="-I$(FIREBIRD_FDW_DEPS_PREFIX)/include" LDFLAGS="-L$(INSTALL_PREFIX)/lib" -j$(BUILD_JOBS) && $(MAKE) -C $(FIREBIRD_FDW_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config PG_CPPFLAGS="-I$(FIREBIRD_FDW_DEPS_PREFIX)/include" LDFLAGS="-L$(INSTALL_PREFIX)/lib" install
+	mkdir -p $(INSTALL_PREFIX)/share/licenses/firebird_fdw
+	cp $(FIREBIRD_FDW_DIR)/License $(INSTALL_PREFIX)/share/licenses/firebird_fdw/
+endif
+
+$(PGMQ_DIR).tar.gz:
+	@set -eu; \
+	tmp="$@.tmp.$$$$"; trap 'rm -f "$$tmp"' EXIT HUP INT TERM; \
+	curl --fail --location --show-error --proto '=https' --proto-redir '=https' --retry 3 -o "$$tmp" "$(PGMQ_URL)"; \
+	printf '%s  %s\n' '$(PGMQ_SHA256)' "$$tmp" | $(SHA256_CMD) -c -; \
+	mv -f "$$tmp" "$@"
+
+$(PGMQ_DIR)/pgmq-extension/Makefile: $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PGMQ_DIR).tar.gz
+	printf '%s  %s\n' '$(PGMQ_SHA256)' '$(PGMQ_DIR).tar.gz' | $(SHA256_CMD) -c -
+	mkdir -p $(PGMQ_DIR)
+	tar xzf $(PGMQ_DIR).tar.gz -C $(PGMQ_DIR) --strip-components=1
+	touch $@
+
+# Two make invocations: pgmq copies sql/pgmq.sql to sql/pgmq--$(EXTVERSION).sql
+# during `all`, and DATA=$(wildcard sql/*--*.sql) is expanded at parse time.
+$(INSTALL_PREFIX)/share/postgresql/extension/pgmq.control: $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PGMQ_DIR)/pgmq-extension/Makefile $(INSTALL_PREFIX)/bin/postgres
+	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(PGMQ_DIR)/pgmq-extension PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config -j$(BUILD_JOBS) && $(MAKE) -C $(PGMQ_DIR)/pgmq-extension PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config install
+
 $(TIGERFS_CONFIG_STAMP): FORCE
 	@set -eu; \
 	if test -z "$(TIGERFS_EXPECTED_SHA256)"; then echo 'no pinned SHA-256 for TigerFS $(TIGERFS_OS)/$(TIGERFS_ARCH)' >&2; exit 1; fi; \
@@ -459,7 +605,7 @@ bundle-metadata: postgres $(EXTENSIONS) relativize
 .PHONY: clean clean-all
 clean:
 	rm -rf $(INSTALL_PREFIX) $(NATIVE_BUILD_DIRS)
-	rm -f tigerfs tigerfs_*.tar.gz tigerfs_*.tar.gz.sha256 $(TIGERFS_CONFIG_STAMP) $(POSTGRES_BUNDLE_CONFIG_STAMP)
+	rm -f tigerfs tigerfs_*.tar.gz tigerfs_*.tar.gz.sha256 $(TIGERFS_CONFIG_STAMP) $(POSTGRES_BUNDLE_CONFIG_STAMP) Firebird-*.pkg
 
 clean-all: clean
-	rm -f *.tar.gz
+	rm -f *.tar.gz *.pkg

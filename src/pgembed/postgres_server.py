@@ -38,6 +38,15 @@ LOG_TAIL_MAX_LINES = 200
 MIGRATION_DOCUMENTATION = "docs/migrations/postgresql-17-to-18.md"
 
 
+def _firebird_client_env() -> dict[str, str]:
+    """Point libfbclient at the bundled Firebird client root when present."""
+    env = os.environ.copy()
+    firebird_root = POSTGRES_BIN_PATH.parent / "share" / "firebird"
+    if (firebird_root / "firebird.msg").is_file():
+        env["FIREBIRD"] = str(firebird_root)
+    return env
+
+
 def _get_command(name: str):
     cmd = getattr(_commands, name, None)
     if cmd is None:
@@ -355,6 +364,7 @@ class PostgresServer:
                     pgdata=self.pgdata,
                     user=self.system_user,
                     timeout=PG_CTL_START_TIMEOUT_SECONDS,
+                    env=_firebird_client_env(),
                 )
             except subprocess.TimeoutExpired as exc:
                 raise self._startup_error(
@@ -494,6 +504,8 @@ class PostgresServer:
             "pg_net": "pg_net",
             "http": "pgsql_http",
             "plsh": "plsh",
+            "firebird_fdw": "firebird_fdw",
+            "pgmq": "pgmq",
         }
         package_name = extension_map.get(extension_name, extension_name)
         if not pgembed.has_extension(package_name):

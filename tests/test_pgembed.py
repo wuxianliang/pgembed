@@ -429,6 +429,29 @@ def test_psql_bm25s(tmp_postgres):
     assert '(2 rows)' in bm25_output
 
 
+def test_firebird_fdw(tmp_postgres):
+    _require_extension("firebird_fdw")
+    assert tmp_postgres.psql("LOAD 'firebird_fdw';").strip() == "LOAD"
+    assert tmp_postgres.psql("CREATE EXTENSION firebird_fdw;").strip() == "CREATE EXTENSION"
+    assert "firebird_fdw" in tmp_postgres.psql(
+        "SELECT fdwname FROM pg_foreign_data_wrapper WHERE fdwname = 'firebird_fdw';"
+    )
+    version = tmp_postgres.psql("SELECT firebird_fdw_version();").strip()
+    assert "10402" in version
+
+
+def test_pgmq(tmp_postgres):
+    _require_extension("pgmq")
+    assert tmp_postgres.create_extension("pgmq").strip() == "CREATE EXTENSION"
+    tmp_postgres.psql("SELECT pgmq.create('demo');")
+    assert "demo" in tmp_postgres.psql("SELECT queue_name FROM pgmq.list_queues();")
+    send_output = tmp_postgres.psql("SELECT pgmq.send('demo', jsonb_build_object('hello', 'world'));")
+    assert "(1 row)" in send_output
+    read_output = tmp_postgres.psql("SELECT message FROM pgmq.read('demo', 30, 1);")
+    assert "hello" in read_output
+    assert "world" in read_output
+
+
 def _psql_tuples(pg: pgembed.PostgresServer, query: str) -> list[tuple]:
     """Run SQL through psycopg2 for structured assertions."""
     import psycopg2
@@ -704,6 +727,8 @@ RELEASE_EXTENSION_ORDER = (
     "pg_net",
     "pgsql_http",
     "plsh",
+    "firebird_fdw",
+    "pgmq",
 )
 RELEASE_PRELOAD_PACKAGES = (
     "vectorchord",

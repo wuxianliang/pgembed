@@ -77,6 +77,12 @@ def test_identical_stamp_preserves_mtime_and_complete_prefix(tmp_path: Path) -> 
         ("PSQL_BM25S_ICU_PREFIX", "/fixture/icu"),
         ("PG_NET_CURL_PREFIX", "/fixture/curl"),
         ("PGSQL_HTTP_CURL_CONFIG", "/fixture/curl-config"),
+        ("FIREBIRD_FDW_SHA256", "0" * 64),
+        ("LIBFQ_SHA256", "0" * 64),
+        ("LIBTOMMATH_SHA256", "0" * 64),
+        ("FIREBIRD_CLIENT_SHA256", "0" * 64),
+        ("FIREBIRD_FDW_DEPS_RECIPE", "v2"),
+        ("PGMQ_SHA256", "0" * 64),
     ],
 )
 def test_identity_changes_invalidate_prefix(
@@ -148,7 +154,17 @@ def test_source_lock_and_toolchain_are_recorded(tmp_path: Path) -> None:
     assert "pg_net_curl_prefix=" in text
     assert "pgsql_http_curl_config=" in text
     assert "plsh=" in text
+    assert "firebird_fdw=" in text
+    assert "libfq=" in text
+    assert "firebird_client=" in text
+    assert "firebird_fdw_deps_recipe=v1" in text
+    assert "pgmq=v1.12.0:e6bdbb2311a3bbf34439871a99ee1e5e87c79fdca2b1e6784411a51b079314d1" in text
     assert "pg_duckdb" not in text
+
+
+def test_pgmq_install_uses_two_pgxs_invocations() -> None:
+    makefile = MAKEFILE.read_text()
+    assert makefile.count("$(MAKE) -C $(PGMQ_DIR)/pgmq-extension") == 2
 
 
 def test_all_git_sources_use_verification_markers() -> None:

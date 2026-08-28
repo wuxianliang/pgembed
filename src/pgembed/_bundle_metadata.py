@@ -14,6 +14,7 @@ from .errors import BundledPostgresMetadataError
 BUNDLE_METADATA_SCHEMA_VERSION = 1
 BUNDLE_METADATA_FILENAME = "build-metadata.json"
 BINARY_VERSION_TIMEOUT_SECONDS = 5
+SQL_ONLY_EXTENSIONS = frozenset({"pgmq"})
 
 
 def _package_path() -> Path:
@@ -36,6 +37,7 @@ class ExtensionMetadata:
     create_name: str
     preload_name: Optional[str]
     requires_preload: bool
+    has_library: bool
     library: Optional[str]
     control: Optional[str]
     install_sql: Optional[str]
@@ -180,6 +182,9 @@ def _parse_metadata(raw: Any) -> BundleMetadata:
             create_name=_require_str(ext, "create_name", field),
             preload_name=_optional_str(ext, "preload_name", field),
             requires_preload=_require_bool(ext, "requires_preload", field),
+            has_library=(
+                _require_bool(ext, "has_library", field) if "has_library" in ext else True
+            ),
             library=_safe_relative_path(
                 _optional_str(ext, "library", field), f"{field}.library"
             ),
@@ -216,9 +221,25 @@ def _parse_metadata(raw: Any) -> BundleMetadata:
             raise BundledPostgresMetadataError(
                 f"{field}.update_sql must not repeat the base install_sql path"
             )
-        if record.built and not all(artifact_fields):
+        if record.built and not (record.control and record.install_sql):
             raise BundledPostgresMetadataError(
-                f"{field} is built but library, control, and install_sql are not all recorded"
+                f"{field} is built but control and install_sql are not recorded"
+            )
+        if record.built and record.has_library and not record.library:
+            raise BundledPostgresMetadataError(
+                f"{field} is built but library is not recorded"
+            )
+        if record.built and not record.has_library and record.library is not None:
+            raise BundledPostgresMetadataError(
+                f"{field} is SQL-only but a library path is recorded"
+            )
+        if record.built and not record.has_library and record.name not in SQL_ONLY_EXTENSIONS:
+            raise BundledPostgresMetadataError(
+                f"{field} cannot be SQL-only"
+            )
+        if record.built and record.has_library and record.name in SQL_ONLY_EXTENSIONS:
+            raise BundledPostgresMetadataError(
+                f"{field} is SQL-only and must not attest a native library"
             )
         if not record.built and (any(artifact_fields) or record.update_sql):
             raise BundledPostgresMetadataError(

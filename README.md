@@ -1,7 +1,7 @@
 ![Python Version](https://img.shields.io/badge/python-3.12%2C%203.13%2C%203.14-blue)
 ![Postgres Version](https://img.shields.io/badge/PostgreSQL-18.4-blue)
 
-> **PostgreSQL 18 release candidate:** `0.3.0rc1` is the first PG18 channel. Test migrations before production use. Wheels are published for CPython **3.12, 3.13, and 3.14** on macOS arm64 (deployment target **26.0**) and Linux x86_64/aarch64. Python 3.10/3.11 artifacts stop because the project requires Python >=3.12.
+> **PostgreSQL 18 release candidate:** `0.3.0rc2` continues the PG18 channel (adds firebird_fdw and pgmq). Test migrations before production use. Wheels are published for CPython **3.12, 3.13, and 3.14** on macOS arm64 (deployment target **26.0**) and Linux x86_64/aarch64. Python 3.10/3.11 artifacts stop because the project requires Python >=3.12.
 >
 > **PG17 data directories do not start in the PG18 bundle.** pgembed reads `PG_VERSION` before creating files, changing permissions, writing configuration, or starting a process. A PG17 directory raises `PostgresDataDirectoryVersionError` and is left untouched. Follow [the PostgreSQL 17 to 18 migration guide](docs/migrations/postgresql-17-to-18.md); do not point the PG18 wheel at your only copy of PG17 data.
 
@@ -37,6 +37,8 @@ Think of it like SQLite, but with the power of PostgreSQL. Just `pip install pge
 - **Text search ready**: Includes [psql_bm25s](https://github.com/Intelligent-Internet/psql_bm25s) for BM25-based full-text search with ranking
 - **Time-series ready**: Includes [TimescaleDB](https://github.com/timescale/timescaledb) for hypertables and time-series workloads
 - **Scheduling, HTTP & shell**: Includes [pg_cron](https://github.com/citusdata/pg_cron) (job scheduler), [pg_net](https://github.com/supabase/pg_net) (async HTTP client), [pgsql-http](https://github.com/pramsey/pgsql-http) (synchronous HTTP client), and [PL/sh](https://github.com/petere/plsh) (shell-script functions — run bash from SQL)
+- **Firebird FDW**: Includes [firebird_fdw](https://github.com/ibarwick/firebird_fdw) so PostgreSQL can `SELECT`/`INSERT`/`UPDATE`/`DELETE` against a remote Firebird database
+- **Message queue**: Includes [pgmq](https://github.com/pgmq/pgmq) for a lightweight Postgres-native queue (SQS/RSMQ-style send/read/archive)
 
 ## Quick start
 
@@ -158,10 +160,12 @@ pgembed bundles a curated set of PostgreSQL extensions, built specifically for P
 | [pg_net](https://github.com/supabase/pg_net) | `pg_net` | `pg_net` | `pg_net` | async HTTP (requires libcurl) |
 | [pgsql-http](https://github.com/pramsey/pgsql-http) | `http` | `pgsql_http` | — | synchronous HTTP client (requires libcurl) |
 | [PL/sh](https://github.com/petere/plsh) | `plsh` | `plsh` | — | shell-script functions (untrusted; superuser) |
+| [firebird_fdw](https://github.com/ibarwick/firebird_fdw) | `firebird_fdw` | `firebird_fdw` | — | read/write Firebird via SQL/MED; bundles the Firebird **client** (not a Firebird server) |
+| [pgmq](https://github.com/pgmq/pgmq) | `pgmq` | `pgmq` | — | SQL-only message queue; partitioned queues need [pg_partman](https://github.com/pgpartman/pg_partman) (not bundled) |
 
 `pgembed-pgvector` is also published as a standalone wheel; the rest are bundled into the base `pgembed` wheel.
 
-> 🐯 **TigerFS is not in this table** — it is a *companion client tool*, not a PostgreSQL extension. Unlike the C/Rust extensions above, TigerFS is a standalone binary at `pgembed.POSTGRES_BIN_PATH / "tigerfs"` that runs as a separate daemon and connects to your database as a client (no `CREATE EXTENSION`). See [Mount your database as a filesystem](#mount-your-database-as-a-filesystem).
+> 🐯 **TigerFS is not in this table** — it is a *companion client tool*, not a PostgreSQL extension. Unlike the bundled extensions above, TigerFS is a standalone binary at `pgembed.POSTGRES_BIN_PATH / "tigerfs"` that runs as a separate daemon and connects to your database as a client (no `CREATE EXTENSION`). See [Mount your database as a filesystem](#mount-your-database-as-a-filesystem).
 
 ### Checking available extensions
 
@@ -170,7 +174,7 @@ import pgembed
 
 # Check which extensions are available
 print(pgembed.list_extensions())
-# {'pgvector': True, 'vectorchord': True, 'age': True, 'psql_bm25s': True, 'timescaledb': True, 'pg_cron': True, 'pg_net': True, 'pgsql_http': True, 'plsh': True}
+# {'pgvector': True, 'vectorchord': True, 'age': True, 'psql_bm25s': True, 'timescaledb': True, 'pg_cron': True, 'pg_net': True, 'pgsql_http': True, 'plsh': True, 'firebird_fdw': True, 'pgmq': True}
 
 # Check if a specific extension is available, then create it
 if pgembed.has_extension('vectorchord'):
@@ -195,13 +199,45 @@ SELECT run_bash('ls -la | head -3');
 
 PL/sh is an untrusted language: only superusers may define functions (the bundled server runs as superuser), so every function is arbitrary command execution on the database host.
 
+### Connecting to Firebird
+
+`firebird_fdw` is a foreign data wrapper: it needs a running Firebird server (the wheel only bundles the client). User-mapping credentials are stored in the PostgreSQL catalog.
+
+```python
+server.create_extension("firebird_fdw")
+server.psql("""
+CREATE SERVER firebird_server
+  FOREIGN DATA WRAPPER firebird_fdw
+  OPTIONS (address 'localhost', database '/path/to/database.fdb');
+CREATE USER MAPPING FOR CURRENT_USER
+  SERVER firebird_server
+  OPTIONS (username 'sysdba', password 'masterkey');
+IMPORT FOREIGN SCHEMA public FROM SERVER firebird_server INTO public;
+""")
+```
+
+See the [upstream firebird_fdw documentation](https://github.com/ibarwick/firebird_fdw) for server, table, and user-mapping options. Third-party license notices for the bundled Firebird client and libfq are under `pginstall/share/licenses/`.
+
+### Using pgmq
+
+pgmq is SQL-only (no shared library, no `shared_preload_libraries`). Partitioned queues need [pg_partman](https://github.com/pgpartman/pg_partman), which is not bundled.
+
+```python
+server.create_extension("pgmq")
+server.psql("""
+SELECT pgmq.create('jobs');
+SELECT pgmq.send('jobs', jsonb_build_object('task', 'hello'));
+SELECT msg_id, message FROM pgmq.read('jobs', 30, 1);
+""")
+```
+
 ### Platform Support
 
 pgembed's release pipeline is Darwin/Linux-only:
 
 - **macOS:** arm64 only, with deployment target **26.0**. The project does not claim Intel, universal2, or older macOS compatibility.
 - **Linux:** x86_64 and aarch64.
-- **Extensions:** the bundled extension set is built for those release targets. `pg_net` and `pgsql_http` additionally require **libcurl ≥ 7.83**: CI builds a private curl 8 via `tools/build_curl.sh` (auditwheel vendors `libcurl.so.4` into the Linux wheels); on macOS they link the SDK/system libcurl. Local Linux hosts need a curl that new, or run `tools/build_curl.sh` and pass `PG_NET_CURL_PREFIX` / `PGSQL_HTTP_CURL_CONFIG`.
+- **Extensions:** the bundled extension set is built for those release targets. `pg_net` and `pgsql_http` additionally require **libcurl ≥ 7.83**: CI builds a private curl 8 via `tools/build_curl.sh` (auditwheel vendors `libcurl.so.4` into the Linux wheels); on macOS they link the SDK/system libcurl. Local Linux hosts need a curl that new, or run `tools/build_curl.sh` and pass `PG_NET_CURL_PREFIX` / `PGSQL_HTTP_CURL_CONFIG`. `firebird_fdw` vendors [libfq](https://github.com/ibarwick/libfq) 0.6.2 and the Firebird 5.0.3 **client** libraries (plus libtommath on Linux); it does not ship a Firebird server. musl builds skip it.
 - **TigerFS** *(companion tool, not an extension)*: uses NFS on macOS and FUSE on Linux. Linux mounts require usable `/dev/fuse` access, so mount tests are normally unavailable in default containers, Google Colab, and other unprivileged sandboxes unless the host grants the needed device/capability. The embedded database and non-mount TigerFS package tests do not require FUSE.
 
 ### Preload before start
@@ -253,8 +289,14 @@ make pgsql_http
 # Build only plsh
 make plsh
 
+# Build only firebird_fdw (Firebird client + libfq)
+make firebird_fdw
+
+# Build only pgmq (SQL-only message queue)
+make pgmq
+
 # Build specific combination
-make EXTENSIONS="pgvector vectorchord timescaledb pg_cron pg_net pgsql_http plsh" all
+make EXTENSIONS="pgvector vectorchord timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq" all
 ```
 
 ## History
@@ -263,4 +305,4 @@ pgembed is a fork of [pgserver](https://github.com/orm011/pgserver), which was i
 
 - Bundled Darwin/Linux releases for macOS arm64 and Linux x86_64/aarch64
 - Robust process management and cleanup
-- Built-in pgvector, VectorChord, Apache AGE, psql_bm25s, TimescaleDB, pg_cron, and pg_net extensions
+- Built-in pgvector, VectorChord, Apache AGE, psql_bm25s, TimescaleDB, pg_cron, pg_net, firebird_fdw, and pgmq extensions
