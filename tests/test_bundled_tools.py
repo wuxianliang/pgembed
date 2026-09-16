@@ -69,6 +69,9 @@ def test_release_bundle_contains_complete_attested_extension_set() -> None:
         "plsh",
         "firebird_fdw",
         "pgmq",
+        "pg_partman",
+        "pgtap",
+        "pg_jsonschema",
     }
     assert set(metadata.extensions) == expected
 
@@ -81,7 +84,7 @@ def test_release_bundle_contains_complete_attested_extension_set() -> None:
         assert pgembed.has_extension(name)
         assert extension.control is not None
         assert extension.install_sql is not None
-        if name == "pgmq":
+        if name in {"pgmq", "pg_partman", "pgtap"}:
             assert extension.library is None
         else:
             assert extension.library is not None
@@ -103,6 +106,28 @@ def test_release_bundle_contains_complete_attested_extension_set() -> None:
     assert pgmq.version == "1.12.0"
     assert pgmq.has_library is False
     assert pgembed.get_extension_path("pgmq") is None
+
+    partman = metadata.extensions["pg_partman"]
+    assert partman.requires_preload is False
+    assert partman.preload_name is None
+    assert partman.create_name == "pg_partman"
+    assert partman.version == "5.5.0"
+    assert partman.has_library is False
+    assert pgembed.get_extension_path("pg_partman") is None
+
+    pgtap = metadata.extensions["pgtap"]
+    assert pgtap.requires_preload is False
+    assert pgtap.create_name == "pgtap"
+    assert pgtap.version == "1.3.4"
+    assert pgtap.has_library is False
+    assert pgembed.get_extension_path("pgtap") is None
+
+    jsonschema = metadata.extensions["pg_jsonschema"]
+    assert jsonschema.requires_preload is False
+    assert jsonschema.create_name == "pg_jsonschema"
+    assert jsonschema.version == "0.3.4"
+    assert jsonschema.has_library is True
+    assert jsonschema.source_commit == "d08e4dea14549858b54791d6da4f606dc58a512e"
 
     firebird = metadata.extensions["firebird_fdw"]
     assert firebird.requires_preload is False

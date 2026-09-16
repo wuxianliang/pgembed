@@ -54,6 +54,9 @@ EXTENSION_PACKAGES = {
     "plsh": None,
     "firebird_fdw": None,
     "pgmq": None,
+    "pg_partman": None,
+    "pgtap": None,
+    "pg_jsonschema": None,
 }
 
 EXTENSION_ARTIFACT_STEMS = {
@@ -73,6 +76,9 @@ EXTENSION_SO_FILES = {
     "plsh": ("plsh.dylib", "plsh.so", "plsh.dll"),
     "firebird_fdw": ("firebird_fdw.dylib", "firebird_fdw.so", "firebird_fdw.dll"),
     "pgmq": (),
+    "pg_partman": (),
+    "pgtap": (),
+    "pg_jsonschema": ("pg_jsonschema.dylib", "pg_jsonschema.so", "pg_jsonschema.dll"),
 }
 
 EXTENSION_PRECEDENCE: dict[str, tuple[str, ...]] = {}
@@ -238,6 +244,9 @@ def get_extension_create_name(name: str) -> str:
         "plsh": "plsh",
         "firebird_fdw": "firebird_fdw",
         "pgmq": "pgmq",
+        "pg_partman": "pg_partman",
+        "pgtap": "pgtap",
+        "pg_jsonschema": "pg_jsonschema",
     }.get(name, name)
 
 

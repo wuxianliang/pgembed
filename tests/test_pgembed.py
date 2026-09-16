@@ -452,6 +452,81 @@ def test_pgmq(tmp_postgres):
     assert "world" in read_output
 
 
+def test_pg_partman_partitioned_pgmq(tmp_postgres):
+    _require_extension("pg_partman")
+    _require_extension("pgmq")
+    assert tmp_postgres.create_extension("pg_partman").strip() == "CREATE EXTENSION"
+    assert tmp_postgres.create_extension("pgmq").strip() == "CREATE EXTENSION"
+    tmp_postgres.psql("SELECT pgmq.create_partitioned('part_jobs');")
+    assert "part_jobs" in tmp_postgres.psql("SELECT queue_name FROM pgmq.list_queues();")
+    send_output = tmp_postgres.psql(
+        "SELECT pgmq.send('part_jobs', jsonb_build_object('hello', 'partitioned'));"
+    )
+    assert "(1 row)" in send_output
+
+
+def test_pgtap(tmp_postgres):
+    _require_extension("pgtap")
+    assert tmp_postgres.create_extension("pgtap").strip() == "CREATE EXTENSION"
+    version = tmp_postgres.psql("SELECT pgtap_version();")
+    assert "1.3" in version
+
+
+def test_pg_jsonschema(tmp_postgres):
+    _require_extension("pg_jsonschema")
+    assert tmp_postgres.create_extension("pg_jsonschema").strip() == "CREATE EXTENSION"
+    valid = tmp_postgres.psql(
+        """SELECT json_matches_schema('{"type": "object"}'::json, '{}'::json);"""
+    )
+    assert "t" in valid
+    invalid = tmp_postgres.psql(
+        """SELECT json_matches_schema('{"type": "object"}'::json, '[]'::json);"""
+    )
+    assert "f" in invalid
+
+
+CONTRIB_EXTENSIONS = (
+    "pg_trgm",
+    "unaccent",
+    "pgcrypto",
+    "ltree",
+    "hstore",
+    "postgres_fdw",
+)
+
+
+def test_contrib_extensions(tmp_postgres):
+    for name in CONTRIB_EXTENSIONS:
+        assert tmp_postgres.create_extension(name).strip() == "CREATE EXTENSION"
+    similarity = tmp_postgres.psql("SELECT similarity('pgembed', 'pgembed');")
+    assert "1" in similarity
+    digest = tmp_postgres.psql("SELECT encode(digest('pgembed', 'sha256'), 'hex');")
+    assert len(digest.splitlines()) >= 3
+    ltree = tmp_postgres.psql("SELECT 'a.b.c'::ltree;")
+    assert "a.b.c" in ltree
+    gen_uuid = tmp_postgres.psql("SELECT gen_random_uuid();")
+    assert "-" in gen_uuid
+
+
+@pytest.fixture
+def tmp_postgres_pg_stat_statements():
+    tmp_pg_data = tempfile.mkdtemp()
+    with pgembed.get_server(
+        tmp_pg_data,
+        cleanup_mode="delete",
+        shared_preload_libraries=["pg_stat_statements"],
+    ) as pg:
+        yield pg
+
+
+def test_pg_stat_statements(tmp_postgres_pg_stat_statements):
+    pg = tmp_postgres_pg_stat_statements
+    assert pg.create_extension("pg_stat_statements").strip() == "CREATE EXTENSION"
+    pg.psql("SELECT 1;")
+    count = pg.psql("SELECT count(*) FROM pg_stat_statements;")
+    assert "(1 row)" in count
+
+
 def _psql_tuples(pg: pgembed.PostgresServer, query: str) -> list[tuple]:
     """Run SQL through psycopg2 for structured assertions."""
     import psycopg2
@@ -729,6 +804,9 @@ RELEASE_EXTENSION_ORDER = (
     "plsh",
     "firebird_fdw",
     "pgmq",
+    "pg_partman",
+    "pgtap",
+    "pg_jsonschema",
 )
 RELEASE_PRELOAD_PACKAGES = (
     "vectorchord",

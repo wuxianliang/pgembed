@@ -83,6 +83,11 @@ def test_identical_stamp_preserves_mtime_and_complete_prefix(tmp_path: Path) -> 
         ("FIREBIRD_CLIENT_SHA256", "0" * 64),
         ("FIREBIRD_FDW_DEPS_RECIPE", "v2"),
         ("PGMQ_SHA256", "0" * 64),
+        ("PG_PARTMAN_SHA256", "0" * 64),
+        ("PGTAP_SHA256", "0" * 64),
+        ("PG_JSONSCHEMA_COMMIT", "0" * 40),
+        ("PG_JSONSCHEMA_PGRX_VERSION", "0.16.1"),
+        ("OPENSSL_PREFIX", "/fixture/openssl"),
     ],
 )
 def test_identity_changes_invalidate_prefix(
@@ -148,7 +153,7 @@ def test_source_lock_and_toolchain_are_recorded(tmp_path: Path) -> None:
     build.run()
     text = build.stamp.read_text()
     assert "postgres_commit=f5cc81719e6da4cbdb1f797c48b693e91018153a" in text
-    assert "rust_toolchain=1.95.0" in text
+    assert "rust_toolchain=1.96.0" in text
     assert "cargo_pgrx_version=0.17.0" in text
     assert "psql_bm25s_icu_prefix=" in text
     assert "pg_net_curl_prefix=" in text
@@ -159,12 +164,24 @@ def test_source_lock_and_toolchain_are_recorded(tmp_path: Path) -> None:
     assert "firebird_client=" in text
     assert "firebird_fdw_deps_recipe=v1" in text
     assert "pgmq=v1.12.0:e6bdbb2311a3bbf34439871a99ee1e5e87c79fdca2b1e6784411a51b079314d1" in text
+    assert "pg_partman=v5.5.0:a3f100ae871677f0012579f58542c174900297f664a4ad2be0256e7ee5e33502" in text
+    assert "pgtap=v1.3.4:d2c951afb296a001d21785611a8e966e3f8fa3f5bfbd929396a5130c0152f314" in text
+    assert "pg_jsonschema=d08e4dea14549858b54791d6da4f606dc58a512e" in text
+    assert "pg_jsonschema_pgrx=0.19.2" in text
+    assert "contrib_install=v1" in text
+    assert "recipe=pgembed-postgresql-18-bundle-v2" in text
+    assert "postgres_configure=--without-readline --without-icu --with-libxml --with-ssl=openssl" in text
     assert "pg_duckdb" not in text
 
 
 def test_pgmq_install_uses_two_pgxs_invocations() -> None:
     makefile = MAKEFILE.read_text()
     assert makefile.count("$(MAKE) -C $(PGMQ_DIR)/pgmq-extension") == 2
+    assert makefile.count("$(MAKE) -C $(PG_PARTMAN_DIR)") == 2
+    assert "NO_BGW=1" in makefile
+    assert makefile.count("$(MAKE) -C $(PGTAP_DIR)") == 2
+    assert "$(MAKE) -C $(POSTGRES_BLD)/contrib" in makefile
+    assert "--with-ssl=openssl" in makefile
 
 
 def test_all_git_sources_use_verification_markers() -> None:
@@ -176,6 +193,7 @@ def test_all_git_sources_use_verification_markers() -> None:
         "PG_CRON_SOURCE_VERIFIED",
         "PG_NET_SOURCE_VERIFIED",
         "PLSH_SOURCE_VERIFIED",
+        "PG_JSONSCHEMA_SOURCE_VERIFIED",
     )
     for marker in markers:
         assert f"$({marker}): $(POSTGRES_BUNDLE_CONFIG_STAMP)" in makefile

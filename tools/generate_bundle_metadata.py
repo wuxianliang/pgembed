@@ -16,7 +16,7 @@ import tempfile
 from typing import Any
 
 SCHEMA_VERSION = 1
-BUNDLE_RECIPE = "pgembed-postgresql-18-bundle-v1"
+BUNDLE_RECIPE = "pgembed-postgresql-18-bundle-v2"
 PG_MAJOR = 18
 
 EXTENSIONS: dict[str, dict[str, Any]] = {
@@ -54,6 +54,38 @@ EXTENSIONS: dict[str, dict[str, Any]] = {
         preload_name=None,
         requires_preload=False,
         has_library=False,
+    ),
+    "pg_partman": dict(
+        version="5.5.0",
+        source_ref="v5.5.0",
+        source_commit=None,
+        source_sha256="a3f100ae871677f0012579f58542c174900297f664a4ad2be0256e7ee5e33502",
+        stem="pg_partman",
+        create_name="pg_partman",
+        preload_name=None,
+        requires_preload=False,
+        has_library=False,
+    ),
+    "pgtap": dict(
+        version="1.3.4",
+        source_ref="v1.3.4",
+        source_commit=None,
+        source_sha256="d2c951afb296a001d21785611a8e966e3f8fa3f5bfbd929396a5130c0152f314",
+        stem="pgtap",
+        create_name="pgtap",
+        preload_name=None,
+        requires_preload=False,
+        has_library=False,
+    ),
+    "pg_jsonschema": dict(
+        version="0.3.4",
+        source_ref="d08e4dea14549858b54791d6da4f606dc58a512e",
+        source_commit="d08e4dea14549858b54791d6da4f606dc58a512e",
+        source_sha256=None,
+        stem="pg_jsonschema",
+        create_name="pg_jsonschema",
+        preload_name=None,
+        requires_preload=False,
     ),
 }
 

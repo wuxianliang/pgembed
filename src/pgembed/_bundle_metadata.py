@@ -14,7 +14,7 @@ from .errors import BundledPostgresMetadataError
 BUNDLE_METADATA_SCHEMA_VERSION = 1
 BUNDLE_METADATA_FILENAME = "build-metadata.json"
 BINARY_VERSION_TIMEOUT_SECONDS = 5
-SQL_ONLY_EXTENSIONS = frozenset({"pgmq"})
+SQL_ONLY_EXTENSIONS = frozenset({"pgmq", "pg_partman", "pgtap"})
 
 
 def _package_path() -> Path:

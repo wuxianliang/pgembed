@@ -38,7 +38,9 @@ Think of it like SQLite, but with the power of PostgreSQL. Just `pip install pge
 - **Time-series ready**: Includes [TimescaleDB](https://github.com/timescale/timescaledb) for hypertables and time-series workloads
 - **Scheduling, HTTP & shell**: Includes [pg_cron](https://github.com/citusdata/pg_cron) (job scheduler), [pg_net](https://github.com/supabase/pg_net) (async HTTP client), [pgsql-http](https://github.com/pramsey/pgsql-http) (synchronous HTTP client), and [PL/sh](https://github.com/petere/plsh) (shell-script functions — run bash from SQL)
 - **Firebird FDW**: Includes [firebird_fdw](https://github.com/ibarwick/firebird_fdw) so PostgreSQL can `SELECT`/`INSERT`/`UPDATE`/`DELETE` against a remote Firebird database
-- **Message queue**: Includes [pgmq](https://github.com/pgmq/pgmq) for a lightweight Postgres-native queue (SQS/RSMQ-style send/read/archive)
+- **Message queue**: Includes [pgmq](https://github.com/pgmq/pgmq) for a lightweight Postgres-native queue (SQS/RSMQ-style send/read/archive) and [pg_partman](https://github.com/pgpartman/pg_partman) for partitioned queues
+- **Validation & tests**: Includes [pg_jsonschema](https://github.com/supabase/pg_jsonschema) for JSON Schema checks on `json`/`jsonb`, and [pgTAP](https://pgtap.org/) for SQL-level TAP tests
+- **PostgreSQL contrib**: `pg_stat_statements`, `pg_trgm`, `unaccent`, `pgcrypto`, `ltree`, `hstore`, and `postgres_fdw` are installed with the server so `CREATE EXTENSION` works without extra packages
 
 ## Quick start
 
@@ -161,7 +163,10 @@ pgembed bundles a curated set of PostgreSQL extensions, built specifically for P
 | [pgsql-http](https://github.com/pramsey/pgsql-http) | `http` | `pgsql_http` | — | synchronous HTTP client (requires libcurl) |
 | [PL/sh](https://github.com/petere/plsh) | `plsh` | `plsh` | — | shell-script functions (untrusted; superuser) |
 | [firebird_fdw](https://github.com/ibarwick/firebird_fdw) | `firebird_fdw` | `firebird_fdw` | — | read/write Firebird via SQL/MED; bundles the Firebird **client** (not a Firebird server) |
-| [pgmq](https://github.com/pgmq/pgmq) | `pgmq` | `pgmq` | — | SQL-only message queue; partitioned queues need [pg_partman](https://github.com/pgpartman/pg_partman) (not bundled) |
+| [pgmq](https://github.com/pgmq/pgmq) | `pgmq` | `pgmq` | — | SQL-only message queue; partitioned queues use bundled [pg_partman](https://github.com/pgpartman/pg_partman) |
+| [pg_partman](https://github.com/pgpartman/pg_partman) | `pg_partman` | `pg_partman` | — | SQL-only partition manager (background worker not bundled; use `pg_cron` for maintenance) |
+| [pgTAP](https://pgtap.org/) | `pgtap` | `pgtap` | — | SQL-only TAP test framework |
+| [pg_jsonschema](https://github.com/supabase/pg_jsonschema) | `pg_jsonschema` | `pg_jsonschema` | — | JSON Schema validation (Rust/pgrx) |
 
 `pgembed-pgvector` is also published as a standalone wheel; the rest are bundled into the base `pgembed` wheel.
 
@@ -174,7 +179,7 @@ import pgembed
 
 # Check which extensions are available
 print(pgembed.list_extensions())
-# {'pgvector': True, 'vectorchord': True, 'age': True, 'psql_bm25s': True, 'timescaledb': True, 'pg_cron': True, 'pg_net': True, 'pgsql_http': True, 'plsh': True, 'firebird_fdw': True, 'pgmq': True}
+# {'pgvector': True, 'vectorchord': True, 'age': True, 'psql_bm25s': True, 'timescaledb': True, 'pg_cron': True, 'pg_net': True, 'pgsql_http': True, 'plsh': True, 'firebird_fdw': True, 'pgmq': True, 'pg_partman': True, 'pgtap': True, 'pg_jsonschema': True}
 
 # Check if a specific extension is available, then create it
 if pgembed.has_extension('vectorchord'):
@@ -220,7 +225,7 @@ See the [upstream firebird_fdw documentation](https://github.com/ibarwick/firebi
 
 ### Using pgmq
 
-pgmq is SQL-only (no shared library, no `shared_preload_libraries`). Partitioned queues need [pg_partman](https://github.com/pgpartman/pg_partman), which is not bundled.
+pgmq is SQL-only (no shared library, no `shared_preload_libraries`). Partitioned queues need [pg_partman](https://github.com/pgpartman/pg_partman), which is bundled (also SQL-only; the optional `pg_partman_bgw` worker is not).
 
 ```python
 server.create_extension("pgmq")
@@ -229,7 +234,43 @@ SELECT pgmq.create('jobs');
 SELECT pgmq.send('jobs', jsonb_build_object('task', 'hello'));
 SELECT msg_id, message FROM pgmq.read('jobs', 30, 1);
 """)
+
+server.create_extension("pg_partman")
+server.psql("SELECT pgmq.create_partitioned('part_jobs');")
 ```
+
+### JSON Schema and pgTAP
+
+```python
+server.create_extension("pg_jsonschema")
+server.psql("""
+SELECT json_matches_schema('{"type": "object"}'::json, '{}'::json);
+""")
+
+server.create_extension("pgtap")
+server.psql("SELECT pgtap_version();")
+```
+
+### PostgreSQL contrib
+
+These ship with the PG18 server (not listed by `pgembed.list_extensions()`, but `CREATE EXTENSION` works). `pg_stat_statements` must be in `shared_preload_libraries` before start.
+
+```python
+server.create_extension("pg_trgm")
+server.create_extension("unaccent")
+server.create_extension("pgcrypto")
+server.create_extension("ltree")
+server.create_extension("hstore")
+server.create_extension("postgres_fdw")
+
+with pgembed.get_server(
+    "/path/to/my/data/dir",
+    shared_preload_libraries=["pg_stat_statements"],
+) as server:
+    server.create_extension("pg_stat_statements")
+```
+
+An agent-oriented preload set is `vchord, pg_cron, pg_stat_statements`. Do not preload every bundled library by default. `pg_net` only if the database itself sends webhooks.
 
 ### Platform Support
 
@@ -237,7 +278,7 @@ pgembed's release pipeline is Darwin/Linux-only:
 
 - **macOS:** arm64 only, with deployment target **26.0**. The project does not claim Intel, universal2, or older macOS compatibility.
 - **Linux:** x86_64 and aarch64.
-- **Extensions:** the bundled extension set is built for those release targets. `pg_net` and `pgsql_http` additionally require **libcurl ≥ 7.83**: CI builds a private curl 8 via `tools/build_curl.sh` (auditwheel vendors `libcurl.so.4` into the Linux wheels); on macOS they link the SDK/system libcurl. Local Linux hosts need a curl that new, or run `tools/build_curl.sh` and pass `PG_NET_CURL_PREFIX` / `PGSQL_HTTP_CURL_CONFIG`. `firebird_fdw` vendors [libfq](https://github.com/ibarwick/libfq) 0.6.2 and the Firebird 5.0.3 **client** libraries (plus libtommath on Linux); it does not ship a Firebird server. musl builds skip it.
+- **Extensions:** the bundled extension set is built for those release targets. `pg_net` and `pgsql_http` additionally require **libcurl ≥ 7.83**: CI builds a private curl 8 via `tools/build_curl.sh` (auditwheel vendors `libcurl.so.4` into the Linux wheels); on macOS they link the SDK/system libcurl. Local Linux hosts need a curl that new, or run `tools/build_curl.sh` and pass `PG_NET_CURL_PREFIX` / `PGSQL_HTTP_CURL_CONFIG`. `firebird_fdw` vendors [libfq](https://github.com/ibarwick/libfq) 0.6.2 and the Firebird 5.0.3 **client** libraries (plus libtommath on Linux); it does not ship a Firebird server. musl builds skip it. `pgcrypto` needs OpenSSL: Linux uses the distro library; macOS vendors Homebrew `openssl@3` into the prefix (`@loader_path`) because Apple no longer ships `/usr/lib/libssl`. musl builds skip VectorChord and `pg_jsonschema`.
 - **TigerFS** *(companion tool, not an extension)*: uses NFS on macOS and FUSE on Linux. Linux mounts require usable `/dev/fuse` access, so mount tests are normally unavailable in default containers, Google Colab, and other unprivileged sandboxes unless the host grants the needed device/capability. The embedded database and non-mount TigerFS package tests do not require FUSE.
 
 ### Preload before start
@@ -295,8 +336,17 @@ make firebird_fdw
 # Build only pgmq (SQL-only message queue)
 make pgmq
 
+# Build only pg_partman (SQL-only; no background worker)
+make pg_partman
+
+# Build only pgTAP
+make pgtap
+
+# Build only pg_jsonschema (Rust/pgrx)
+make pg_jsonschema
+
 # Build specific combination
-make EXTENSIONS="pgvector vectorchord timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq" all
+make EXTENSIONS="pgvector vectorchord timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema" all
 ```
 
 ## History
@@ -305,4 +355,4 @@ pgembed is a fork of [pgserver](https://github.com/orm011/pgserver), which was i
 
 - Bundled Darwin/Linux releases for macOS arm64 and Linux x86_64/aarch64
 - Robust process management and cleanup
-- Built-in pgvector, VectorChord, Apache AGE, psql_bm25s, TimescaleDB, pg_cron, pg_net, firebird_fdw, and pgmq extensions
+- Built-in pgvector, VectorChord, Apache AGE, psql_bm25s, TimescaleDB, pg_cron, pg_net, firebird_fdw, pgmq, pg_partman, pgTAP, and pg_jsonschema extensions

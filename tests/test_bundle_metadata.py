@@ -100,6 +100,12 @@ def test_schema_v1_metadata_loads(tmp_path: Path) -> None:
     assert metadata.extensions["pgvector"].has_library is True
     assert metadata.extensions["pgmq"].has_library is False
     assert metadata.extensions["pgmq"].built is False
+    assert metadata.extensions["pg_partman"].has_library is False
+    assert metadata.extensions["pg_partman"].built is False
+    assert metadata.extensions["pgtap"].has_library is False
+    assert metadata.extensions["pgtap"].built is False
+    assert metadata.extensions["pg_jsonschema"].has_library is True
+    assert metadata.extensions["pg_jsonschema"].built is False
     assert BUNDLE_METADATA_PATH.parts[-4:] == (
         "pginstall", "share", "pgembed", "build-metadata.json"
     )
@@ -177,6 +183,37 @@ def test_native_built_extension_cannot_omit_library(tmp_path: Path) -> None:
     output.write_text(json.dumps(payload))
     with pytest.raises(BundledPostgresMetadataError, match="cannot be SQL-only"):
         load_bundle_metadata(output)
+
+
+def test_generator_records_sql_only_pg_partman_and_pgtap(tmp_path: Path) -> None:
+    prefix = _prefix(tmp_path)
+    extension_dir = prefix / "share" / "postgresql" / "extension"
+    (extension_dir / "pg_partman.control").write_text("default_version = '5.5.0'\n")
+    (extension_dir / "pg_partman--5.5.0.sql").write_text("-- fixture\n")
+    (extension_dir / "pgtap.control").write_text("default_version = '1.3.4'\n")
+    (extension_dir / "pgtap--1.3.4.sql").write_text("-- fixture\n")
+    output = prefix / "bundle-metadata.json"
+    result = _generate(
+        prefix,
+        output,
+        requested="pgvector pg_partman pgtap",
+        built="pgvector pg_partman pgtap",
+    )
+    assert result.returncode == 0, result.stderr
+    metadata = load_bundle_metadata(output)
+    assert metadata is not None
+    partman = metadata.extensions["pg_partman"]
+    assert partman.built is True
+    assert partman.library is None
+    assert partman.has_library is False
+    assert partman.create_name == "pg_partman"
+    assert partman.version == "5.5.0"
+    pgtap = metadata.extensions["pgtap"]
+    assert pgtap.built is True
+    assert pgtap.library is None
+    assert pgtap.has_library is False
+    assert pgtap.create_name == "pgtap"
+    assert pgtap.version == "1.3.4"
 
 
 def test_generator_rejects_sql_only_pgmq_with_native_library(tmp_path: Path) -> None:

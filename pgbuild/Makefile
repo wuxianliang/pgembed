@@ -17,10 +17,26 @@ HAS_LIBCURL ?= $(shell if command -v curl-config >/dev/null 2>&1 || [ "$(HOST_OS
 LIBC_NAME := $(if $(filter 1,$(IS_MUSL)),musl,$(if $(filter Linux,$(HOST_OS)),glibc,system))
 PG_DLSUFFIX := $(if $(filter Darwin,$(HOST_OS)),dylib,so)
 SHA256_CMD := $(if $(filter Darwin,$(HOST_OS)),shasum -a 256,sha256sum)
-POSTGRES_CONFIGURE_FLAGS := --without-readline --without-icu --with-libxml
+POSTGRES_CONFIGURE_FLAGS := --without-readline --without-icu --with-libxml --with-ssl=openssl
 MACOSX_DEPLOYMENT_TARGET ?=
+# pgcrypto (and libpq SSL) need OpenSSL. Linux uses the distro library
+# (manylinux-whitelisted). macOS has no /usr/lib/libssl, so we link
+# Homebrew openssl@3 and copy the dylibs into the prefix; relativize then
+# rewrites the absolute Homebrew install names to @loader_path.
+ifeq ($(HOST_OS),Darwin)
+OPENSSL_PREFIX ?= $(shell if [ -d /opt/homebrew/opt/openssl@3 ]; then echo /opt/homebrew/opt/openssl@3; elif [ -d /usr/local/opt/openssl@3 ]; then echo /usr/local/opt/openssl@3; elif [ -d /opt/homebrew/opt/openssl ]; then echo /opt/homebrew/opt/openssl; elif [ -d /usr/local/opt/openssl ]; then echo /usr/local/opt/openssl; fi)
+POSTGRES_OPENSSL_CFLAGS := $(if $(OPENSSL_PREFIX),-I$(OPENSSL_PREFIX)/include,)
+POSTGRES_OPENSSL_LIBS := $(if $(OPENSSL_PREFIX),-L$(OPENSSL_PREFIX)/lib -lssl -lcrypto,)
+# AC_CHECK_LIB uses LDFLAGS, not OPENSSL_LIBS; Homebrew openssl@3 is keg-only.
+POSTGRES_OPENSSL_ENV := $(if $(OPENSSL_PREFIX),PKG_CONFIG_PATH="$(OPENSSL_PREFIX)/lib/pkgconfig" CPPFLAGS="$(POSTGRES_OPENSSL_CFLAGS)" LDFLAGS="-L$(OPENSSL_PREFIX)/lib",)
+else
+OPENSSL_PREFIX :=
+POSTGRES_OPENSSL_CFLAGS :=
+POSTGRES_OPENSSL_LIBS :=
+POSTGRES_OPENSSL_ENV :=
+endif
 
-RUST_TOOLCHAIN := 1.95.0
+RUST_TOOLCHAIN := 1.96.0
 CARGO_PGRX_VERSION := 0.17.0
 RUST_EXTENSIONS_SUPPORTED := $(if $(filter 1,$(IS_MUSL)),0,1)
 
@@ -30,9 +46,9 @@ RUST_EXTENSIONS_SUPPORTED := $(if $(filter 1,$(IS_MUSL)),0,1)
 BUILD_JOBS ?= $(shell n=$$(sysctl -n hw.ncpu 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4); if [ $$n -gt 8 ]; then echo 8; else echo $$n; fi)
 
 ifeq ($(RUST_EXTENSIONS_SUPPORTED),1)
-EXTENSIONS ?= pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq tigerfs
+EXTENSIONS ?= pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema tigerfs
 else
-EXTENSIONS ?= pgvector age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq tigerfs
+EXTENSIONS ?= pgvector age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap tigerfs
 endif
 REQUESTED_EXTENSIONS := $(strip $(EXTENSIONS))
 UNSUPPORTED_EXTENSIONS :=
@@ -40,7 +56,7 @@ ifeq ($(HAS_LIBCURL),0)
 UNSUPPORTED_EXTENSIONS += pg_net pgsql_http
 endif
 ifeq ($(RUST_EXTENSIONS_SUPPORTED),0)
-UNSUPPORTED_EXTENSIONS += vectorchord
+UNSUPPORTED_EXTENSIONS += vectorchord pg_jsonschema
 endif
 ifeq ($(IS_MUSL),1)
 UNSUPPORTED_EXTENSIONS += firebird_fdw
@@ -195,11 +211,35 @@ FIREBIRD_FDW_DEPS_SCRIPT := ../tools/build_firebird_fdw_deps.sh
 FIREBIRD_FDW_DEPS_RECIPE := v1
 
 # pgmq is a SQL-only PGXS extension (PL/pgSQL, no shared library). Partitioned
-# queues optionally need pg_partman, which is not bundled.
+# queues need pg_partman, which is bundled without its optional background worker
+# (agent maintenance uses pg_cron instead of pg_partman_bgw).
 PGMQ_TAG := v1.12.0
 PGMQ_SHA256 := e6bdbb2311a3bbf34439871a99ee1e5e87c79fdca2b1e6784411a51b079314d1
 PGMQ_URL := https://github.com/pgmq/pgmq/archive/refs/tags/$(PGMQ_TAG).tar.gz
 PGMQ_DIR := pgmq-$(PGMQ_TAG)
+
+PG_PARTMAN_TAG := v5.5.0
+PG_PARTMAN_SHA256 := a3f100ae871677f0012579f58542c174900297f664a4ad2be0256e7ee5e33502
+PG_PARTMAN_URL := https://github.com/pgpartman/pg_partman/archive/refs/tags/$(PG_PARTMAN_TAG).tar.gz
+PG_PARTMAN_DIR := pg_partman-$(PG_PARTMAN_TAG)
+
+# SQL-only TAP suite. The control file's module_pathname is substitution-only;
+# there is no shared library.
+PGTAP_TAG := v1.3.4
+PGTAP_SHA256 := d2c951afb296a001d21785611a8e966e3f8fa3f5bfbd929396a5130c0152f314
+PGTAP_URL := https://github.com/theory/pgtap/archive/refs/tags/$(PGTAP_TAG).tar.gz
+PGTAP_DIR := pgtap-$(PGTAP_TAG)
+
+# pgrx extension. Pin the commit that bumped pgrx to 0.19.2 (PG18.4), not the
+# v0.3.4 tag (pgrx 0.16.1, PG18 beta2). cargo-pgrx is installed into the
+# source tree so it does not collide with VectorChord's 0.17.0 CLI.
+PG_JSONSCHEMA_COMMIT := d08e4dea14549858b54791d6da4f606dc58a512e
+PG_JSONSCHEMA_REPO := https://github.com/supabase/pg_jsonschema.git
+PG_JSONSCHEMA_DIR := pg_jsonschema-$(PG_JSONSCHEMA_COMMIT)
+PG_JSONSCHEMA_SOURCE_VERIFIED := $(PG_JSONSCHEMA_DIR)/.pgembed-source-verified
+PG_JSONSCHEMA_PGRX_VERSION := 0.19.2
+PG_JSONSCHEMA_PGRX_ROOT := $(PG_JSONSCHEMA_DIR)/.pgrx-cli
+PG_JSONSCHEMA_PGRX_HOME := $(PG_JSONSCHEMA_DIR)/.pgrx-home
 
 TIGERFS_TAG ?= v0.7.0
 TIGERFS_OS ?= $(HOST_OS)
@@ -213,7 +253,7 @@ TIGERFS_SHA256_Darwin_x86_64 := c62f7017e63750de4ae9375fb9becb1a50f0006ed44dfaee
 TIGERFS_EXPECTED_SHA256 := $(TIGERFS_SHA256_$(TIGERFS_OS)_$(TIGERFS_ARCH))
 TIGERFS_SELECTED := $(filter tigerfs,$(EXTENSIONS) $(MAKECMDGOALS))
 
-NATIVE_BUILD_DIRS := $(POSTGRES_SRC) $(POSTGRES_BLD) $(PGVECTOR_DIR) $(VECTORCHORD_DIR) $(AGE_DIR) $(PSQL_BM25S_DIR) $(TIMESCALEDB_DIR) $(PG_CRON_DIR) $(PG_NET_DIR) $(PGSQL_HTTP_DIR) $(PLSH_DIR) $(FIREBIRD_FDW_DIR) $(LIBFQ_DIR) $(LIBTOMMATH_DIR) $(FIREBIRD_FDW_DEPS_DIR) $(PGMQ_DIR)
+NATIVE_BUILD_DIRS := $(POSTGRES_SRC) $(POSTGRES_BLD) $(PGVECTOR_DIR) $(VECTORCHORD_DIR) $(AGE_DIR) $(PSQL_BM25S_DIR) $(TIMESCALEDB_DIR) $(PG_CRON_DIR) $(PG_NET_DIR) $(PGSQL_HTTP_DIR) $(PLSH_DIR) $(FIREBIRD_FDW_DIR) $(LIBFQ_DIR) $(LIBTOMMATH_DIR) $(FIREBIRD_FDW_DEPS_DIR) $(PGMQ_DIR) $(PG_PARTMAN_DIR) $(PGTAP_DIR) $(PG_JSONSCHEMA_DIR)
 
 .PHONY: FORCE
 FORCE:
@@ -226,7 +266,7 @@ $(POSTGRES_BUNDLE_CONFIG_STAMP): FORCE
 	tmp="$@.tmp.$$$$"; trap 'rm -f "$$tmp"' EXIT HUP INT TERM; \
 	printf '%s\n' \
 		'schema=1' \
-		'recipe=pgembed-postgresql-18-bundle-v1' \
+		'recipe=pgembed-postgresql-18-bundle-v2' \
 		'postgres_major=$(POSTGRES_MAJOR)' \
 		'postgres_version=$(POSTGRES_VERSION)' \
 		'postgres_ref=$(POSTGRES_SRC_REF)' \
@@ -267,6 +307,12 @@ $(POSTGRES_BUNDLE_CONFIG_STAMP): FORCE
 		'firebird_fdw_deps_prefix=$(abspath $(FIREBIRD_FDW_DEPS_PREFIX))' \
 		'firebird_fdw_deps_recipe=$(FIREBIRD_FDW_DEPS_RECIPE)' \
 		'pgmq=$(PGMQ_TAG):$(PGMQ_SHA256)' \
+		'pg_partman=$(PG_PARTMAN_TAG):$(PG_PARTMAN_SHA256)' \
+		'pgtap=$(PGTAP_TAG):$(PGTAP_SHA256)' \
+		'pg_jsonschema=$(PG_JSONSCHEMA_COMMIT)' \
+		'pg_jsonschema_pgrx=$(PG_JSONSCHEMA_PGRX_VERSION)' \
+		'contrib_install=v1' \
+		'openssl_prefix=$(OPENSSL_PREFIX)' \
 		'tigerfs=$(TIGERFS_TAG):$(TIGERFS_OS):$(TIGERFS_ARCH):$(TIGERFS_EXPECTED_SHA256)' \
 		'rust_toolchain=$(RUST_TOOLCHAIN)' \
 		'cargo_pgrx_version=$(CARGO_PGRX_VERSION)' > "$$tmp"; \
@@ -278,7 +324,7 @@ $(POSTGRES_BUNDLE_CONFIG_STAMP): FORCE
 	rm -rf "$(INSTALL_PREFIX)" $(NATIVE_BUILD_DIRS); \
 	mv -f "$$tmp" "$@"
 
-.PHONY: all postgres pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq tigerfs relativize bundle-metadata
+.PHONY: all postgres pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema tigerfs relativize bundle-metadata
 all: postgres $(EXTENSIONS) relativize bundle-metadata
 postgres: $(INSTALL_PREFIX)/bin/postgres
 pgvector: postgres $(INSTALL_PREFIX)/lib/postgresql/vector.$(PG_DLSUFFIX)
@@ -297,6 +343,14 @@ else
 firebird_fdw: postgres $(INSTALL_PREFIX)/lib/postgresql/firebird_fdw.$(PG_DLSUFFIX)
 endif
 pgmq: postgres $(INSTALL_PREFIX)/share/postgresql/extension/pgmq.control
+pg_partman: postgres $(INSTALL_PREFIX)/share/postgresql/extension/pg_partman.control
+pgtap: postgres $(INSTALL_PREFIX)/share/postgresql/extension/pgtap.control
+ifeq ($(RUST_EXTENSIONS_SUPPORTED),1)
+pg_jsonschema: postgres $(INSTALL_PREFIX)/lib/postgresql/pg_jsonschema.$(PG_DLSUFFIX)
+else
+pg_jsonschema:
+	$(error pg_jsonschema is unsupported on musl)
+endif
 tigerfs: postgres $(INSTALL_PREFIX)/bin/tigerfs
 
 $(POSTGRES_SOURCE_VERIFIED): $(POSTGRES_BUNDLE_CONFIG_STAMP)
@@ -309,7 +363,7 @@ $(POSTGRES_SOURCE_VERIFIED): $(POSTGRES_BUNDLE_CONFIG_STAMP)
 
 $(POSTGRES_BLD)/config.status: $(POSTGRES_BUNDLE_CONFIG_STAMP) $(POSTGRES_SOURCE_VERIFIED)
 	mkdir -p $(POSTGRES_BLD)
-	cd $(POSTGRES_BLD) && ../$(POSTGRES_SRC)/configure --prefix=$(INSTALL_PREFIX) $(POSTGRES_CONFIGURE_FLAGS)
+	cd $(POSTGRES_BLD) && $(POSTGRES_OPENSSL_ENV) OPENSSL_CFLAGS="$(POSTGRES_OPENSSL_CFLAGS)" OPENSSL_LIBS="$(POSTGRES_OPENSSL_LIBS)" ../$(POSTGRES_SRC)/configure --prefix=$(INSTALL_PREFIX) $(POSTGRES_CONFIGURE_FLAGS)
 
 $(POSTGRES_BLD)/src/bin/initdb/initdb: $(POSTGRES_BUNDLE_CONFIG_STAMP) $(POSTGRES_BLD)/config.status
 	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(POSTGRES_BLD) -j$(BUILD_JOBS)
@@ -317,6 +371,18 @@ $(POSTGRES_BLD)/src/bin/initdb/initdb: $(POSTGRES_BUNDLE_CONFIG_STAMP) $(POSTGRE
 $(INSTALL_PREFIX)/bin/postgres: $(POSTGRES_BUNDLE_CONFIG_STAMP) $(POSTGRES_BLD)/src/bin/initdb/initdb
 	mkdir -p $(INSTALL_PREFIX)
 	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(POSTGRES_BLD) install
+	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(POSTGRES_BLD)/contrib -j$(BUILD_JOBS)
+	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(POSTGRES_BLD)/contrib install
+ifeq ($(HOST_OS),Darwin)
+	@set -eu; \
+	if test -z "$(OPENSSL_PREFIX)" || test ! -f "$(OPENSSL_PREFIX)/lib/libssl.3.dylib"; then \
+		echo "pgcrypto requires OpenSSL; install Homebrew openssl@3" >&2; \
+		exit 1; \
+	fi; \
+	mkdir -p "$(INSTALL_PREFIX)/lib"; \
+	cp "$(OPENSSL_PREFIX)/lib/libssl.3.dylib" "$(INSTALL_PREFIX)/lib/"; \
+	cp "$(OPENSSL_PREFIX)/lib/libcrypto.3.dylib" "$(INSTALL_PREFIX)/lib/"
+endif
 
 $(PGVECTOR_DIR).tar.gz:
 	@set -eu; \
@@ -547,6 +613,67 @@ $(PGMQ_DIR)/pgmq-extension/Makefile: $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PGMQ_DIR)
 # during `all`, and DATA=$(wildcard sql/*--*.sql) is expanded at parse time.
 $(INSTALL_PREFIX)/share/postgresql/extension/pgmq.control: $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PGMQ_DIR)/pgmq-extension/Makefile $(INSTALL_PREFIX)/bin/postgres
 	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(PGMQ_DIR)/pgmq-extension PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config -j$(BUILD_JOBS) && $(MAKE) -C $(PGMQ_DIR)/pgmq-extension PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config install
+
+$(PG_PARTMAN_DIR).tar.gz:
+	@set -eu; \
+	tmp="$@.tmp.$$$$"; trap 'rm -f "$$tmp"' EXIT HUP INT TERM; \
+	curl --fail --location --show-error --proto '=https' --proto-redir '=https' --retry 3 -o "$$tmp" "$(PG_PARTMAN_URL)"; \
+	printf '%s  %s\n' '$(PG_PARTMAN_SHA256)' "$$tmp" | $(SHA256_CMD) -c -; \
+	mv -f "$$tmp" "$@"
+
+$(PG_PARTMAN_DIR)/Makefile: $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PG_PARTMAN_DIR).tar.gz
+	printf '%s  %s\n' '$(PG_PARTMAN_SHA256)' '$(PG_PARTMAN_DIR).tar.gz' | $(SHA256_CMD) -c -
+	mkdir -p $(PG_PARTMAN_DIR)
+	tar xzf $(PG_PARTMAN_DIR).tar.gz -C $(PG_PARTMAN_DIR) --strip-components=1
+	touch $@
+
+# SQL-only: NO_BGW=1 skips src/pg_partman_bgw. Two invocations because DATA
+# includes the concatenated sql/pg_partman--$(EXTVERSION).sql produced by `all`.
+$(INSTALL_PREFIX)/share/postgresql/extension/pg_partman.control: $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PG_PARTMAN_DIR)/Makefile $(INSTALL_PREFIX)/bin/postgres
+	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(PG_PARTMAN_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config NO_BGW=1 -j$(BUILD_JOBS) && $(MAKE) -C $(PG_PARTMAN_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config NO_BGW=1 install
+
+$(PGTAP_DIR).tar.gz:
+	@set -eu; \
+	tmp="$@.tmp.$$$$"; trap 'rm -f "$$tmp"' EXIT HUP INT TERM; \
+	curl --fail --location --show-error --proto '=https' --proto-redir '=https' --retry 3 -o "$$tmp" "$(PGTAP_URL)"; \
+	printf '%s  %s\n' '$(PGTAP_SHA256)' "$$tmp" | $(SHA256_CMD) -c -; \
+	mv -f "$$tmp" "$@"
+
+$(PGTAP_DIR)/Makefile: $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PGTAP_DIR).tar.gz
+	printf '%s  %s\n' '$(PGTAP_SHA256)' '$(PGTAP_DIR).tar.gz' | $(SHA256_CMD) -c -
+	mkdir -p $(PGTAP_DIR)
+	tar xzf $(PGTAP_DIR).tar.gz -C $(PGTAP_DIR) --strip-components=1
+	touch $@
+
+# Two invocations: DATA includes sql/pgtap--$(EXTVERSION).sql generated by `all`.
+$(INSTALL_PREFIX)/share/postgresql/extension/pgtap.control: $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PGTAP_DIR)/Makefile $(INSTALL_PREFIX)/bin/postgres
+	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(PGTAP_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config -j$(BUILD_JOBS) && $(MAKE) -C $(PGTAP_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config install
+
+$(PG_JSONSCHEMA_SOURCE_VERIFIED): $(POSTGRES_BUNDLE_CONFIG_STAMP)
+	@set -eu; \
+	rm -rf "$(PG_JSONSCHEMA_DIR)"; \
+	git init "$(PG_JSONSCHEMA_DIR)"; \
+	git -C "$(PG_JSONSCHEMA_DIR)" remote add origin "$(PG_JSONSCHEMA_REPO)"; \
+	git -C "$(PG_JSONSCHEMA_DIR)" fetch --depth 1 origin "$(PG_JSONSCHEMA_COMMIT)"; \
+	git -C "$(PG_JSONSCHEMA_DIR)" checkout --detach FETCH_HEAD; \
+	test "$$(git -C "$(PG_JSONSCHEMA_DIR)" rev-parse HEAD)" = "$(PG_JSONSCHEMA_COMMIT)"; \
+	test -f "$(PG_JSONSCHEMA_DIR)/Cargo.toml"; \
+	touch "$@"
+
+$(INSTALL_PREFIX)/lib/postgresql/pg_jsonschema.$(PG_DLSUFFIX): $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PG_JSONSCHEMA_SOURCE_VERIFIED) $(INSTALL_PREFIX)/bin/postgres
+ifeq ($(RUST_EXTENSIONS_SUPPORTED),1)
+	@set -eu; \
+	export PATH="$$HOME/.cargo/bin:$$PATH" RUSTUP_TOOLCHAIN="$(RUST_TOOLCHAIN)"; \
+	if ! "$(PG_JSONSCHEMA_PGRX_ROOT)/bin/cargo-pgrx" --version 2>/dev/null | grep -q '$(PG_JSONSCHEMA_PGRX_VERSION)'; then \
+		cargo install cargo-pgrx --version "$(PG_JSONSCHEMA_PGRX_VERSION)" --locked --root "$(PG_JSONSCHEMA_PGRX_ROOT)"; \
+	fi; \
+	export PATH="$(abspath $(PG_JSONSCHEMA_PGRX_ROOT))/bin:$$PATH" PGRX_HOME="$(abspath $(PG_JSONSCHEMA_PGRX_HOME))"; \
+	unset MAKELEVEL MAKEFLAGS MFLAGS; \
+	cargo pgrx init --pg18="$(INSTALL_PREFIX)/bin/pg_config"; \
+	cd "$(PG_JSONSCHEMA_DIR)" && cargo pgrx install --release --no-default-features --features pg18 --pg-config "$(INSTALL_PREFIX)/bin/pg_config"
+else
+	$(error pg_jsonschema is unsupported on musl)
+endif
 
 $(TIGERFS_CONFIG_STAMP): FORCE
 	@set -eu; \

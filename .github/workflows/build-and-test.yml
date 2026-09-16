@@ -8,8 +8,8 @@ on:
   workflow_dispatch:
 
 env:
-  PG_BUILD_CACHE_EPOCH: pg18-bundle-v1
-  RUST_TOOLCHAIN: '1.95.0'
+  PG_BUILD_CACHE_EPOCH: pg18-bundle-v2
+  RUST_TOOLCHAIN: '1.96.0'
   CARGO_PGRX_VERSION: '0.17.0'
 
 jobs:
@@ -78,17 +78,17 @@ jobs:
             os: macos-latest
             arch: arm64
             deployment-target: '26.0' # minos 26.0. This does not claim compatibility with older macOS.
-            extensions: pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq tigerfs
+            extensions: pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema tigerfs
           - runner: ubuntu-latest
             os: ubuntu-latest
             arch: x86_64
             deployment-target: ''
-            extensions: pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq tigerfs
+            extensions: pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema tigerfs
           - runner: ubuntu-24.04-arm
             os: ubuntu-latest
             arch: aarch64
             deployment-target: ''
-            extensions: pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq tigerfs
+            extensions: pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema tigerfs
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -140,8 +140,8 @@ jobs:
           EXTENSIONS: ${{ matrix.extensions }}
         run: |
           export PATH="$(pwd)/src/pgembed/pginstall/bin:$HOME/.cargo/bin:/opt/homebrew/opt/ccache/bin:$PATH"
-          # no LDFLAGS: see CIBW_ENVIRONMENT_MACOS — nothing in the bundle may
-          # link Homebrew OpenSSL or the wheel dependency audit rejects it
+          # no LDFLAGS: see CIBW_ENVIRONMENT_MACOS — Homebrew OpenSSL must not
+          # remain as an absolute install name (pgcrypto vendors it into prefix)
           export IS_MUSL=0
           cargo install cargo-pgrx --version "$CARGO_PGRX_VERSION" --locked
           make EXTENSIONS="$EXTENSIONS" build
@@ -173,8 +173,8 @@ jobs:
           CIBW_BEFORE_ALL_MACOS: |
             brew install jq llvm cmake ninja openssl icu4c@78 curl bison
             export IS_MUSL=0
-            rustup install 1.95.0
-            rustup default 1.95.0
+            rustup install 1.96.0
+            rustup default 1.96.0
             cargo install cargo-pgrx --version 0.17.0 --locked
             make EXTENSIONS="${{ matrix.extensions }}" build
           CIBW_BEFORE_ALL_LINUX: |
@@ -194,22 +194,21 @@ jobs:
             # openssl-sys (cargo-pgrx dependency) no longer accepts the 1.1.1
             # in this image; point it at the OpenSSL 3 built above.
             export OPENSSL_DIR=/usr/local/curl-pg/openssl
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.95.0
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.96.0
             export PATH="$HOME/.cargo/bin:/usr/lib/ccache:$PATH"
-            rustup default 1.95.0
+            rustup default 1.96.0
             cargo install cargo-pgrx --version 0.17.0 --locked
             export IS_MUSL=0
             # no RUSTFLAGS target-features: AVX2/FMA produce an x86-64-v3
             # binary that auditwheel's manylinux policy rejects
             make EXTENSIONS="${{ matrix.extensions }}" build
-          CIBW_ENVIRONMENT_LINUX: PATH="$HOME/.cargo/bin:$PATH:/project/src/pgembed/pginstall/bin" EXTENSIONS="${{ matrix.extensions }}" RUSTUP_TOOLCHAIN=1.95.0 OPENSSL_DIR=/usr/local/curl-pg/openssl PG_NET_CURL_PREFIX=/usr/local/curl-pg PGSQL_HTTP_CURL_CONFIG=/usr/local/curl-pg/bin/curl-config
+          CIBW_ENVIRONMENT_LINUX: PATH="$HOME/.cargo/bin:$PATH:/project/src/pgembed/pginstall/bin" EXTENSIONS="${{ matrix.extensions }}" RUSTUP_TOOLCHAIN=1.96.0 OPENSSL_DIR=/usr/local/curl-pg/openssl PG_NET_CURL_PREFIX=/usr/local/curl-pg PGSQL_HTTP_CURL_CONFIG=/usr/local/curl-pg/bin/curl-config
           CIBW_ENVIRONMENT_MANYLINUX: LIBCLANG_PATH=/usr/lib64
           # No LDFLAGS: "-lssl -lcrypto" here linked Homebrew OpenSSL into the
-          # postgres binary, delocate vendored it into the wheel, and the
-          # dependency audit then rejected its absolute install name. Nothing
-          # in the bundle needs OpenSSL on macOS (pg_net/pgsql-http use the
-          # system libcurl, which carries its own TLS).
-          CIBW_ENVIRONMENT_MACOS: PATH="$PWD/src/pgembed/pginstall/bin:$HOME/.cargo/bin:/opt/homebrew/opt/ccache/bin:$PATH" MACOSX_DEPLOYMENT_TARGET=${{ matrix.deployment-target }} EXTENSIONS="${{ matrix.extensions }}" RUSTUP_TOOLCHAIN=1.95.0 BINDGEN_EXTRA_CLANG_ARGS="$(pg_config --cppflags) -I$(xcrun --show-sdk-path)/usr/include -I/opt/homebrew/include"
+          # postgres binary as an absolute install name, which the wheel
+          # dependency audit rejects. pgcrypto vendors openssl@3 into prefix/lib
+          # and relativize rewrites those names to @loader_path.
+          CIBW_ENVIRONMENT_MACOS: PATH="$PWD/src/pgembed/pginstall/bin:$HOME/.cargo/bin:/opt/homebrew/opt/ccache/bin:$PATH" MACOSX_DEPLOYMENT_TARGET=${{ matrix.deployment-target }} EXTENSIONS="${{ matrix.extensions }}" RUSTUP_TOOLCHAIN=1.96.0 BINDGEN_EXTRA_CLANG_ARGS="$(pg_config --cppflags) -I$(xcrun --show-sdk-path)/usr/include -I/opt/homebrew/include"
           MACOSX_DEPLOYMENT_TARGET: ${{ matrix.deployment-target }}
         run: python -m cibuildwheel --output-dir wheelhouse
       - name: Audit repaired wheel native dependencies

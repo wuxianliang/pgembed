@@ -12,7 +12,7 @@ from tools.release_evidence import generate, verify
 def _metadata() -> dict:
     return {
         "schema_version": 1,
-        "bundle_recipe": "pgembed-postgresql-18-bundle-v1",
+        "bundle_recipe": "pgembed-postgresql-18-bundle-v2",
         "postgres": {
             "version": "18.4",
             "source_ref": "REL_18_4",

@@ -506,9 +506,17 @@ class PostgresServer:
             "plsh": "plsh",
             "firebird_fdw": "firebird_fdw",
             "pgmq": "pgmq",
+            "pg_partman": "pg_partman",
+            "pgtap": "pgtap",
+            "pg_jsonschema": "pg_jsonschema",
         }
         package_name = extension_map.get(extension_name, extension_name)
         if not pgembed.has_extension(package_name):
+            if package_name not in pgembed.EXTENSION_NAMES:
+                create_name = get_extension_create_name(package_name)
+                control = pgembed.EXTENSION_SHARE_PATH / f"{create_name}.control"
+                if control.is_file():
+                    return self.psql(f"CREATE EXTENSION IF NOT EXISTS {create_name};")
             available = [key for key, value in AVAILABLE_EXTENSIONS.items() if value]
             raise RuntimeError(
                 f"Extension {extension_name!r} is not available. Available extensions: {available}"
