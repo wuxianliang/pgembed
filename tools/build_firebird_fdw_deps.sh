@@ -243,14 +243,18 @@ echo "building libfq in $LIBFQ_SRC"
     make install
 )
 
-find "$DEPS_PREFIX/lib" \( -name 'libfq*.dylib' -o -name 'libfq.so*' \) ! -name '*.la' | while IFS= read -r lib; do
+# libtool -release installs libfq-0.6.2.so (SONAME file) plus a libfq.so
+# symlink; match 'libfq*.so*' so the release-named file itself is copied
+# and the symlink is not left dangling in $INSTALL_PREFIX/lib.
+find "$DEPS_PREFIX/lib" \( -name 'libfq*.dylib' -o -name 'libfq*.so*' \) ! -name '*.la' | while IFS= read -r lib; do
     cp -a "$lib" "$INSTALL_PREFIX/lib/"
 done
 if [ "$HOST_OS" = "Darwin" ]; then
     rewrite_darwin_copied_libs "$INSTALL_PREFIX/lib"
 fi
 
-if ! find "$INSTALL_PREFIX/lib" \( -name 'libfq.dylib' -o -name 'libfq*.dylib' -o -name 'libfq.so*' \) | grep -q .; then
+# -type f: a dangling libfq.so symlink must fail this check, not pass it.
+if ! find "$INSTALL_PREFIX/lib" \( -name 'libfq*.dylib' -o -name 'libfq*.so*' \) -type f | grep -q .; then
     echo "libfq is missing from $INSTALL_PREFIX/lib after libfq install" >&2
     exit 1
 fi

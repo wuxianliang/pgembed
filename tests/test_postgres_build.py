@@ -81,7 +81,7 @@ def test_identical_stamp_preserves_mtime_and_complete_prefix(tmp_path: Path) -> 
         ("LIBFQ_SHA256", "0" * 64),
         ("LIBTOMMATH_SHA256", "0" * 64),
         ("FIREBIRD_CLIENT_SHA256", "0" * 64),
-        ("FIREBIRD_FDW_DEPS_RECIPE", "v2"),
+        ("FIREBIRD_FDW_DEPS_RECIPE", "v3"),
         ("PGMQ_SHA256", "0" * 64),
         ("PG_PARTMAN_SHA256", "0" * 64),
         ("PGTAP_SHA256", "0" * 64),
@@ -163,7 +163,7 @@ def test_source_lock_and_toolchain_are_recorded(tmp_path: Path) -> None:
     assert "firebird_fdw=" in text
     assert "libfq=" in text
     assert "firebird_client=" in text
-    assert "firebird_fdw_deps_recipe=v1" in text
+    assert "firebird_fdw_deps_recipe=v2" in text
     assert "pgmq=v1.12.0:e6bdbb2311a3bbf34439871a99ee1e5e87c79fdca2b1e6784411a51b079314d1" in text
     assert "pg_partman=v5.5.0:a3f100ae871677f0012579f58542c174900297f664a4ad2be0256e7ee5e33502" in text
     assert "pgtap=v1.3.4:d2c951afb296a001d21785611a8e966e3f8fa3f5bfbd929396a5130c0152f314" in text

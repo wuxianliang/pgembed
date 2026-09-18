@@ -224,7 +224,7 @@ FIREBIRD_FDW_DEPS_DIR := firebird-fdw-deps
 FIREBIRD_FDW_DEPS_PREFIX ?= $(abspath $(FIREBIRD_FDW_DEPS_DIR))
 FIREBIRD_FDW_DEPS_STAMP := $(FIREBIRD_FDW_DEPS_PREFIX)/.pgembed-deps-complete
 FIREBIRD_FDW_DEPS_SCRIPT := ../tools/build_firebird_fdw_deps.sh
-FIREBIRD_FDW_DEPS_RECIPE := v1
+FIREBIRD_FDW_DEPS_RECIPE := v2
 
 # pgmq is a SQL-only PGXS extension (PL/pgSQL, no shared library). Partitioned
 # queues need pg_partman, which is bundled without its optional background worker
