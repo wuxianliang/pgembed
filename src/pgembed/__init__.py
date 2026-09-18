@@ -57,6 +57,7 @@ EXTENSION_PACKAGES = {
     "pg_partman": None,
     "pgtap": None,
     "pg_jsonschema": None,
+    "pg_typesafe": None,
 }
 
 EXTENSION_ARTIFACT_STEMS = {
@@ -79,6 +80,7 @@ EXTENSION_SO_FILES = {
     "pg_partman": (),
     "pgtap": (),
     "pg_jsonschema": ("pg_jsonschema.dylib", "pg_jsonschema.so", "pg_jsonschema.dll"),
+    "pg_typesafe": ("typesafe.dylib", "typesafe.so", "typesafe.dll"),
 }
 
 EXTENSION_PRECEDENCE: dict[str, tuple[str, ...]] = {}
@@ -247,6 +249,7 @@ def get_extension_create_name(name: str) -> str:
         "pg_partman": "pg_partman",
         "pgtap": "pgtap",
         "pg_jsonschema": "pg_jsonschema",
+        "pg_typesafe": "typesafe",
     }.get(name, name)
 
 

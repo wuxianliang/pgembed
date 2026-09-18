@@ -87,6 +87,16 @@ EXTENSIONS: dict[str, dict[str, Any]] = {
         preload_name=None,
         requires_preload=False,
     ),
+    "pg_typesafe": dict(
+        version="0.0.1",
+        source_ref="93a5acbb43154aea757a96adb680fb3d45a00a9a",
+        source_commit="93a5acbb43154aea757a96adb680fb3d45a00a9a",
+        source_sha256=None,
+        stem="typesafe",
+        create_name="typesafe",
+        preload_name=None,
+        requires_preload=False,
+    ),
 }
 
 

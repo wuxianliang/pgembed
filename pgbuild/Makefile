@@ -46,14 +46,14 @@ RUST_EXTENSIONS_SUPPORTED := $(if $(filter 1,$(IS_MUSL)),0,1)
 BUILD_JOBS ?= $(shell n=$$(sysctl -n hw.ncpu 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4); if [ $$n -gt 8 ]; then echo 8; else echo $$n; fi)
 
 ifeq ($(RUST_EXTENSIONS_SUPPORTED),1)
-EXTENSIONS ?= pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema tigerfs
+EXTENSIONS ?= pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema pg_typesafe tigerfs
 else
-EXTENSIONS ?= pgvector age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap tigerfs
+EXTENSIONS ?= pgvector age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_typesafe tigerfs
 endif
 REQUESTED_EXTENSIONS := $(strip $(EXTENSIONS))
 UNSUPPORTED_EXTENSIONS :=
 ifeq ($(HAS_LIBCURL),0)
-UNSUPPORTED_EXTENSIONS += pg_net pgsql_http
+UNSUPPORTED_EXTENSIONS += pg_net pgsql_http pg_typesafe
 endif
 ifeq ($(RUST_EXTENSIONS_SUPPORTED),0)
 UNSUPPORTED_EXTENSIONS += vectorchord pg_jsonschema
@@ -166,6 +166,22 @@ PGSQL_HTTP_DIR := pgsql-http-$(PGSQL_HTTP_TAG)
 # /usr/bin/curl-config and links the system libcurl.
 PGSQL_HTTP_CURL_CONFIG ?= $(shell command -v curl-config 2>/dev/null || echo curl-config)
 
+# Pinned to upstream master (no tags exist; the repo is pre-alpha): the tip
+# fixes shareability of the extension (dfb1a52) and the Ubuntu CI build
+# (93a5acb). It targets PG16/17 only, so patches/pg_typesafe-pg18-noreturn.patch
+# adapts the removed pg_attribute_noreturn() macro — drop the patch when
+# upstream supports PG18. The Makefile resolves libcurl via pkg-config; point
+# PKG_CONFIG_PATH at the private curl prefix when one is configured so every
+# curl consumer links the same provider (empty: toolchain defaults, which on
+# macOS falls back to -lcurl and links the SDK/system libcurl).
+PG_TYPESAFE_COMMIT := 93a5acbb43154aea757a96adb680fb3d45a00a9a
+PG_TYPESAFE_REPO := https://github.com/giuliosmall/pg_typesafe.git
+PG_TYPESAFE_DIR := pg_typesafe-$(PG_TYPESAFE_COMMIT)
+PG_TYPESAFE_SOURCE_VERIFIED := $(PG_TYPESAFE_DIR)/.pgembed-source-verified
+PG_TYPESAFE_PATCH := patches/pg_typesafe-pg18-noreturn.patch
+PG_TYPESAFE_PATCH_SHA256 := 2c3635684b6906b570b5853d5b8f6dbe02869fe49b2a7683264e08c6364480b2
+PG_TYPESAFE_PKG_CONFIG_PATH := $(if $(PG_NET_CURL_PREFIX),$(PG_NET_CURL_PREFIX)/lib/pkgconfig,)
+
 # Pinned to upstream master (not the 1.20220917 tag): commits after the tag fix a
 # shadowed-variable bug in the trigger OLD-tuple path (5d538a9). No local patches;
 # if one becomes necessary, vendor the tree in-repo instead of cloning.
@@ -253,7 +269,7 @@ TIGERFS_SHA256_Darwin_x86_64 := c62f7017e63750de4ae9375fb9becb1a50f0006ed44dfaee
 TIGERFS_EXPECTED_SHA256 := $(TIGERFS_SHA256_$(TIGERFS_OS)_$(TIGERFS_ARCH))
 TIGERFS_SELECTED := $(filter tigerfs,$(EXTENSIONS) $(MAKECMDGOALS))
 
-NATIVE_BUILD_DIRS := $(POSTGRES_SRC) $(POSTGRES_BLD) $(PGVECTOR_DIR) $(VECTORCHORD_DIR) $(AGE_DIR) $(PSQL_BM25S_DIR) $(TIMESCALEDB_DIR) $(PG_CRON_DIR) $(PG_NET_DIR) $(PGSQL_HTTP_DIR) $(PLSH_DIR) $(FIREBIRD_FDW_DIR) $(LIBFQ_DIR) $(LIBTOMMATH_DIR) $(FIREBIRD_FDW_DEPS_DIR) $(PGMQ_DIR) $(PG_PARTMAN_DIR) $(PGTAP_DIR) $(PG_JSONSCHEMA_DIR)
+NATIVE_BUILD_DIRS := $(POSTGRES_SRC) $(POSTGRES_BLD) $(PGVECTOR_DIR) $(VECTORCHORD_DIR) $(AGE_DIR) $(PSQL_BM25S_DIR) $(TIMESCALEDB_DIR) $(PG_CRON_DIR) $(PG_NET_DIR) $(PGSQL_HTTP_DIR) $(PLSH_DIR) $(FIREBIRD_FDW_DIR) $(LIBFQ_DIR) $(LIBTOMMATH_DIR) $(FIREBIRD_FDW_DEPS_DIR) $(PGMQ_DIR) $(PG_PARTMAN_DIR) $(PGTAP_DIR) $(PG_JSONSCHEMA_DIR) $(PG_TYPESAFE_DIR)
 
 .PHONY: FORCE
 FORCE:
@@ -311,6 +327,8 @@ $(POSTGRES_BUNDLE_CONFIG_STAMP): FORCE
 		'pgtap=$(PGTAP_TAG):$(PGTAP_SHA256)' \
 		'pg_jsonschema=$(PG_JSONSCHEMA_COMMIT)' \
 		'pg_jsonschema_pgrx=$(PG_JSONSCHEMA_PGRX_VERSION)' \
+		'pg_typesafe=$(PG_TYPESAFE_COMMIT)' \
+		'pg_typesafe_patch=$(PG_TYPESAFE_PATCH):$(PG_TYPESAFE_PATCH_SHA256)' \
 		'contrib_install=v1' \
 		'openssl_prefix=$(OPENSSL_PREFIX)' \
 		'tigerfs=$(TIGERFS_TAG):$(TIGERFS_OS):$(TIGERFS_ARCH):$(TIGERFS_EXPECTED_SHA256)' \
@@ -324,7 +342,7 @@ $(POSTGRES_BUNDLE_CONFIG_STAMP): FORCE
 	rm -rf "$(INSTALL_PREFIX)" $(NATIVE_BUILD_DIRS); \
 	mv -f "$$tmp" "$@"
 
-.PHONY: all postgres pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema tigerfs relativize bundle-metadata
+.PHONY: all postgres pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema pg_typesafe tigerfs relativize bundle-metadata
 all: postgres $(EXTENSIONS) relativize bundle-metadata
 postgres: $(INSTALL_PREFIX)/bin/postgres
 pgvector: postgres $(INSTALL_PREFIX)/lib/postgresql/vector.$(PG_DLSUFFIX)
@@ -351,6 +369,7 @@ else
 pg_jsonschema:
 	$(error pg_jsonschema is unsupported on musl)
 endif
+pg_typesafe: postgres $(INSTALL_PREFIX)/lib/postgresql/typesafe.$(PG_DLSUFFIX)
 tigerfs: postgres $(INSTALL_PREFIX)/bin/tigerfs
 
 $(POSTGRES_SOURCE_VERIFIED): $(POSTGRES_BUNDLE_CONFIG_STAMP)
@@ -674,6 +693,32 @@ ifeq ($(RUST_EXTENSIONS_SUPPORTED),1)
 else
 	$(error pg_jsonschema is unsupported on musl)
 endif
+
+$(PG_TYPESAFE_SOURCE_VERIFIED): $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PG_TYPESAFE_PATCH)
+	@set -eu; \
+	rm -rf "$(PG_TYPESAFE_DIR)"; \
+	git init "$(PG_TYPESAFE_DIR)"; \
+	git -C "$(PG_TYPESAFE_DIR)" remote add origin "$(PG_TYPESAFE_REPO)"; \
+	git -C "$(PG_TYPESAFE_DIR)" fetch --depth 1 origin "$(PG_TYPESAFE_COMMIT)"; \
+	git -C "$(PG_TYPESAFE_DIR)" checkout --detach FETCH_HEAD; \
+	test "$$(git -C "$(PG_TYPESAFE_DIR)" rev-parse HEAD)" = "$(PG_TYPESAFE_COMMIT)"; \
+	test -f "$(PG_TYPESAFE_DIR)/Makefile"; \
+	printf '%s  %s\n' '$(PG_TYPESAFE_PATCH_SHA256)' '$(PG_TYPESAFE_PATCH)' | $(SHA256_CMD) -c -; \
+	git -C "$(PG_TYPESAFE_DIR)" apply "$(abspath $(PG_TYPESAFE_PATCH))"; \
+	touch "$@"
+
+# libcurl comes from the extension Makefile's own pkg-config lookup; the
+# recipe only steers it at the private curl when PG_NET_CURL_PREFIX is set
+# (see PG_TYPESAFE_PKG_CONFIG_PATH). On Linux the bundled libcurl.so.4 must
+# exist in the prefix before linking, exactly like pg_net and pgsql-http.
+$(INSTALL_PREFIX)/lib/postgresql/typesafe.$(PG_DLSUFFIX): $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PG_TYPESAFE_SOURCE_VERIFIED) $(CURL_BUNDLE_DEP) $(INSTALL_PREFIX)/bin/postgres
+	@set -eu; \
+	if [ -n "$(PG_TYPESAFE_PKG_CONFIG_PATH)" ]; then \
+		export PKG_CONFIG_PATH="$(PG_TYPESAFE_PKG_CONFIG_PATH)$${PKG_CONFIG_PATH:+:$$PKG_CONFIG_PATH}"; \
+	fi; \
+	unset MAKELEVEL MAKEFLAGS MFLAGS; \
+	$(MAKE) -C $(PG_TYPESAFE_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config -j$(BUILD_JOBS); \
+	$(MAKE) -C $(PG_TYPESAFE_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config install
 
 $(TIGERFS_CONFIG_STAMP): FORCE
 	@set -eu; \

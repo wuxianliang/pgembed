@@ -106,6 +106,8 @@ def test_schema_v1_metadata_loads(tmp_path: Path) -> None:
     assert metadata.extensions["pgtap"].built is False
     assert metadata.extensions["pg_jsonschema"].has_library is True
     assert metadata.extensions["pg_jsonschema"].built is False
+    assert metadata.extensions["pg_typesafe"].has_library is True
+    assert metadata.extensions["pg_typesafe"].built is False
     assert BUNDLE_METADATA_PATH.parts[-4:] == (
         "pginstall", "share", "pgembed", "build-metadata.json"
     )

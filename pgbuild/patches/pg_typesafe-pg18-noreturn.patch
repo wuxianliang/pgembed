@@ -1,0 +1,22 @@
+pg_typesafe 93a5acbb43154aea757a96adb680fb3d45a00a9a targets PostgreSQL 16/17
+only: it declares a noreturn helper with the pg_attribute_noreturn() postfix
+macro, which PostgreSQL 18 removed (3ab9e0997c1) in favor of the pg_noreturn
+prefix specifier. This one-line fix is the only change needed to build against
+PG18. Drop this patch once upstream supports PG18 natively.
+---
+ typesafe.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/typesafe.c b/typesafe.c
+index 83965c0..7b71428 100644
+--- a/typesafe.c
++++ b/typesafe.c
+@@ -72,7 +72,7 @@ static int	typesafe_http_concurrency = 4;
+ /* Last POST body, allocated in TopMemoryContext. */
+ static char *last_request_json = NULL;
+
+-static void json_shape_error(const char *detail) pg_attribute_noreturn();
++static pg_noreturn void json_shape_error(const char *detail);
+ static char *get_text_arg(FunctionCallInfo fcinfo, int argno, const char *name);
+ static Jsonb *get_jsonb_arg(FunctionCallInfo fcinfo, int argno,
+ 							const char *name);

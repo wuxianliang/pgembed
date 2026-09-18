@@ -40,6 +40,7 @@ Think of it like SQLite, but with the power of PostgreSQL. Just `pip install pge
 - **Firebird FDW**: Includes [firebird_fdw](https://github.com/ibarwick/firebird_fdw) so PostgreSQL can `SELECT`/`INSERT`/`UPDATE`/`DELETE` against a remote Firebird database
 - **Message queue**: Includes [pgmq](https://github.com/pgmq/pgmq) for a lightweight Postgres-native queue (SQS/RSMQ-style send/read/archive) and [pg_partman](https://github.com/pgpartman/pg_partman) for partitioned queues
 - **Validation & tests**: Includes [pg_jsonschema](https://github.com/supabase/pg_jsonschema) for JSON Schema checks on `json`/`jsonb`, and [pgTAP](https://pgtap.org/) for SQL-level TAP tests
+- **AI classification**: Includes [pg_typesafe](https://github.com/giuliosmall/pg_typesafe) to call TypeSafe AI (Jev) from SQL for categorical tasks — classify, detect, score, and ask (pre-alpha; requires libcurl; a one-line local patch adapts it to PG18)
 - **PostgreSQL contrib**: `pg_stat_statements`, `pg_trgm`, `unaccent`, `pgcrypto`, `ltree`, `hstore`, and `postgres_fdw` are installed with the server so `CREATE EXTENSION` works without extra packages
 
 ## Quick start
@@ -167,6 +168,7 @@ pgembed bundles a curated set of PostgreSQL extensions, built specifically for P
 | [pg_partman](https://github.com/pgpartman/pg_partman) | `pg_partman` | `pg_partman` | — | SQL-only partition manager (background worker not bundled; use `pg_cron` for maintenance) |
 | [pgTAP](https://pgtap.org/) | `pgtap` | `pgtap` | — | SQL-only TAP test framework |
 | [pg_jsonschema](https://github.com/supabase/pg_jsonschema) | `pg_jsonschema` | `pg_jsonschema` | — | JSON Schema validation (Rust/pgrx) |
+| [pg_typesafe](https://github.com/giuliosmall/pg_typesafe) | `typesafe` | `pg_typesafe` | — | TypeSafe AI (Jev) categorical classification from SQL; works with a TypeSafe key or via OpenRouter's Decisions API (requires libcurl; pre-alpha, PG18-patched) |
 
 `pgembed-pgvector` is also published as a standalone wheel; the rest are bundled into the base `pgembed` wheel.
 
@@ -179,7 +181,7 @@ import pgembed
 
 # Check which extensions are available
 print(pgembed.list_extensions())
-# {'pgvector': True, 'vectorchord': True, 'age': True, 'psql_bm25s': True, 'timescaledb': True, 'pg_cron': True, 'pg_net': True, 'pgsql_http': True, 'plsh': True, 'firebird_fdw': True, 'pgmq': True, 'pg_partman': True, 'pgtap': True, 'pg_jsonschema': True}
+# {'pgvector': True, 'vectorchord': True, 'age': True, 'psql_bm25s': True, 'timescaledb': True, 'pg_cron': True, 'pg_net': True, 'pgsql_http': True, 'plsh': True, 'firebird_fdw': True, 'pgmq': True, 'pg_partman': True, 'pgtap': True, 'pg_jsonschema': True, 'pg_typesafe': True}
 
 # Check if a specific extension is available, then create it
 if pgembed.has_extension('vectorchord'):
@@ -251,6 +253,73 @@ server.create_extension("pgtap")
 server.psql("SELECT pgtap_version();")
 ```
 
+### Using pg_typesafe
+
+`pg_typesafe` calls the [TypeSafe AI](https://typesafe.ai) (Jev) API from SQL for categorical tasks: `typesafe_classify` (choice), `typesafe_detect`/`typesafe_noul` (binary + intensity), `typesafe_score` (0–100 score), and `typesafe_ask` (free-form label). The API key comes from the `typesafe.api_key` GUC or the `TYPESAFE_API_KEY` environment variable of the server process; other GUCs: `typesafe.endpoint`, `typesafe.model`, `typesafe.timeout_ms`, `typesafe.batch_size`, `typesafe.http_concurrency`. Without a key you can still exercise the SQL surface offline via the mock GUC:
+
+```python
+import os
+
+os.environ.setdefault("TYPESAFE_API_KEY", "...")  # inherited by the server process
+
+with pgembed.get_server("/path/to/my/data/dir") as server:
+    server.create_extension("pg_typesafe")
+    # Real calls need the API key above; mock mode needs no key and no network:
+    server.psql("""
+SET typesafe.mock_response = $${
+  "model": "jev-latest",
+  "answers": {"label": {"type": "choice", "choice": "technical",
+                        "confidence": 0.82,
+                        "probabilities": {"billing": 0.08, "technical": 0.85, "sales": 0.07}}},
+  "usage": {"input_tokens": 312, "output_tokens": 48}
+}$$;
+SELECT * FROM typesafe_classify(
+    'Help! My payouts have been failing for 3 days.',
+    'Which team should handle this?',
+    '{"billing": "Payments, invoicing, refunds",
+      "technical": "Bugs, outages, integrations",
+      "sales": "Pricing, upgrades, new accounts"}'::jsonb);
+""")
+```
+
+See the [upstream pg_typesafe README](https://github.com/giuliosmall/pg_typesafe) for the full function set (including `_many` batch variants and `typesafe_last_request()`). The project is pre-alpha; it is pinned to commit `93a5acb` with `pgbuild/patches/pg_typesafe-pg18-noreturn.patch` adapting it to PostgreSQL 18.
+
+#### Using OpenRouter instead of a TypeSafe account
+
+OpenRouter hosts Jev as [`~typesafe/jev-latest`](https://openrouter.ai/~typesafe/jev-latest) (an alias over versioned ids like `typesafe/jev-1.13-20260917`) and serves the same System One wire schema through its **Decisions API (alpha)** — the extension works against it unchanged. Point the GUCs at OpenRouter and put your OpenRouter key (`sk-or-v1-...`) in `TYPESAFE_API_KEY`:
+
+```python
+import os
+
+os.environ["TYPESAFE_API_KEY"] = os.environ["OPENROUTER_API_KEY"]
+
+with pgembed.get_server("/path/to/my/data/dir") as server:
+    server.create_extension("pg_typesafe")
+    # SET is session-scoped: keep it in the same psql() call as the SELECT,
+    # or persist with ALTER SYSTEM ... + SELECT pg_reload_conf().
+    print(server.psql("""
+SET typesafe.endpoint = 'https://openrouter.ai/api/alpha/decisions';
+SET typesafe.model    = '~typesafe/jev-latest';
+SELECT * FROM typesafe_classify(
+    'Help! My payouts have been failing for 3 days.',
+    'Which team should handle this?',
+    '{"billing": "Payments, invoicing, refunds",
+      "technical": "Bugs, outages, integrations",
+      "sales": "Pricing, upgrades, new accounts"}'::jsonb);
+"""))
+#  choice  | confidence |                 probabilities                  |           model            | input_tokens | output_tokens
+# ---------+------------+------------------------------------------------+----------------------------+--------------+---------------
+#  billing |       0.84 | {"sales": 0, "billing": 0.89, "technical": 0.11} | typesafe/jev-1.13-20260917 |          349 |            38
+```
+
+Notes, verified live on 2026-09-18:
+
+- `SET typesafe.endpoint` must precede the query **in the same session** (`server.psql()` opens a fresh connection per call — combine them in one call, or use `ALTER SYSTEM SET` + `pg_reload_conf()`).
+- `TYPESAFE_API_KEY` must be in the environment **before** `get_server()` starts the postmaster (the server process inherits it).
+- The working endpoint is `https://openrouter.ai/api/alpha/decisions`. OpenRouter's own docs page currently shows a doubled path (`/api/v1/api/alpha/...`) that returns 404 — trust the URL here, and re-verify if the alpha API moves.
+- Pricing at time of writing: input $0.042/M tokens, output free (a typical classify call is a fraction of a cent).
+- Pin `typesafe.model = 'typesafe/jev-1.13'` (or a dated variant) instead of the `~...latest` alias for reproducible behavior across Jev releases.
+
 ### PostgreSQL contrib
 
 These ship with the PG18 server (not listed by `pgembed.list_extensions()`, but `CREATE EXTENSION` works). `pg_stat_statements` must be in `shared_preload_libraries` before start.
@@ -278,7 +347,7 @@ pgembed's release pipeline is Darwin/Linux-only:
 
 - **macOS:** arm64 only, with deployment target **26.0**. The project does not claim Intel, universal2, or older macOS compatibility.
 - **Linux:** x86_64 and aarch64.
-- **Extensions:** the bundled extension set is built for those release targets. `pg_net` and `pgsql_http` additionally require **libcurl ≥ 7.83**: CI builds a private curl 8 via `tools/build_curl.sh` (auditwheel vendors `libcurl.so.4` into the Linux wheels); on macOS they link the SDK/system libcurl. Local Linux hosts need a curl that new, or run `tools/build_curl.sh` and pass `PG_NET_CURL_PREFIX` / `PGSQL_HTTP_CURL_CONFIG`. `firebird_fdw` vendors [libfq](https://github.com/ibarwick/libfq) 0.6.2 and the Firebird 5.0.3 **client** libraries (plus libtommath on Linux); it does not ship a Firebird server. musl builds skip it. `pgcrypto` needs OpenSSL: Linux uses the distro library; macOS vendors Homebrew `openssl@3` into the prefix (`@loader_path`) because Apple no longer ships `/usr/lib/libssl`. musl builds skip VectorChord and `pg_jsonschema`.
+- **Extensions:** the bundled extension set is built for those release targets. `pg_net` and `pgsql_http` additionally require **libcurl ≥ 7.83** (`pg_typesafe` links the same libcurl provider and needs ≥ 7.61): CI builds a private curl 8 via `tools/build_curl.sh` (auditwheel vendors `libcurl.so.4` into the Linux wheels); on macOS they link the SDK/system libcurl. Local Linux hosts need a curl that new, or run `tools/build_curl.sh` and pass `PG_NET_CURL_PREFIX` / `PGSQL_HTTP_CURL_CONFIG` (`pg_typesafe` picks the prefix up from `PG_NET_CURL_PREFIX` via pkg-config). `firebird_fdw` vendors [libfq](https://github.com/ibarwick/libfq) 0.6.2 and the Firebird 5.0.3 **client** libraries (plus libtommath on Linux); it does not ship a Firebird server. musl builds skip it. `pgcrypto` needs OpenSSL: Linux uses the distro library; macOS vendors Homebrew `openssl@3` into the prefix (`@loader_path`) because Apple no longer ships `/usr/lib/libssl`. musl builds skip VectorChord and `pg_jsonschema`.
 - **TigerFS** *(companion tool, not an extension)*: uses NFS on macOS and FUSE on Linux. Linux mounts require usable `/dev/fuse` access, so mount tests are normally unavailable in default containers, Google Colab, and other unprivileged sandboxes unless the host grants the needed device/capability. The embedded database and non-mount TigerFS package tests do not require FUSE.
 
 ### Preload before start
@@ -345,8 +414,11 @@ make pgtap
 # Build only pg_jsonschema (Rust/pgrx)
 make pg_jsonschema
 
+# Build only pg_typesafe (needs libcurl)
+make pg_typesafe
+
 # Build specific combination
-make EXTENSIONS="pgvector vectorchord timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema" all
+make EXTENSIONS="pgvector vectorchord timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema pg_typesafe" all
 ```
 
 ## History
@@ -355,4 +427,4 @@ pgembed is a fork of [pgserver](https://github.com/orm011/pgserver), which was i
 
 - Bundled Darwin/Linux releases for macOS arm64 and Linux x86_64/aarch64
 - Robust process management and cleanup
-- Built-in pgvector, VectorChord, Apache AGE, psql_bm25s, TimescaleDB, pg_cron, pg_net, firebird_fdw, pgmq, pg_partman, pgTAP, and pg_jsonschema extensions
+- Built-in pgvector, VectorChord, Apache AGE, psql_bm25s, TimescaleDB, pg_cron, pg_net, firebird_fdw, pgmq, pg_partman, pgTAP, pg_jsonschema, and pg_typesafe extensions

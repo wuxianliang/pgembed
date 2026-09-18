@@ -72,6 +72,7 @@ def test_release_bundle_contains_complete_attested_extension_set() -> None:
         "pg_partman",
         "pgtap",
         "pg_jsonschema",
+        "pg_typesafe",
     }
     assert set(metadata.extensions) == expected
 
@@ -128,6 +129,17 @@ def test_release_bundle_contains_complete_attested_extension_set() -> None:
     assert jsonschema.version == "0.3.4"
     assert jsonschema.has_library is True
     assert jsonschema.source_commit == "d08e4dea14549858b54791d6da4f606dc58a512e"
+
+    typesafe = metadata.extensions["pg_typesafe"]
+    assert typesafe.requires_preload is False
+    assert typesafe.preload_name is None
+    assert typesafe.create_name == "typesafe"
+    assert typesafe.version == "0.0.1"
+    assert typesafe.has_library is True
+    assert typesafe.library is not None
+    assert typesafe.source_commit == "93a5acbb43154aea757a96adb680fb3d45a00a9a"
+    library_path = bundle_root / typesafe.library
+    assert library_path.is_file(), f"typesafe library is missing: {library_path}"
 
     firebird = metadata.extensions["firebird_fdw"]
     assert firebird.requires_preload is False

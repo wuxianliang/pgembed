@@ -485,6 +485,49 @@ def test_pg_jsonschema(tmp_postgres):
     assert "f" in invalid
 
 
+def test_pg_typesafe_mock_classification(tmp_postgres):
+    _require_extension("pg_typesafe")
+    assert tmp_postgres.create_extension("pg_typesafe").strip() == "CREATE EXTENSION"
+    # Mock mode exercises the full SQL/JSON plumbing without network access
+    # or an API key (typesafe.mock_response short-circuits the HTTP call).
+    mock = tmp_postgres.psql(
+        """
+SET typesafe.mock_response = $${
+  "model": "jev-latest",
+  "answers": {
+    "label": {"type": "choice", "choice": "technical", "confidence": 0.82,
+              "probabilities": {"billing": 0.08, "technical": 0.85, "sales": 0.07}}
+  },
+  "usage": {"input_tokens": 312, "output_tokens": 48}
+}$$;
+SELECT choice FROM typesafe_classify(
+    'Help! My payouts have been failing for 3 days.',
+    'Which team should handle this?',
+    '{"billing": "Payments, invoicing, refunds",
+      "technical": "Bugs, outages, integrations",
+      "sales": "Pricing, upgrades, new accounts"}'::jsonb);
+"""
+    )
+    assert "technical" in mock
+    noul = tmp_postgres.psql(
+        """
+SET typesafe.mock_response = $${
+  "model": "jev-latest",
+  "answers": {"flag": {"type": "noul", "noul": 0.92}},
+  "usage": {"input_tokens": 312, "output_tokens": 48}
+}$$;
+SELECT typesafe_noul(
+    'Help! My payouts have been failing for 3 days.',
+    'Does this convey urgency?',
+    'Explicitly time-sensitive',
+    'No urgency expressed');
+"""
+    )
+    assert "0.92" in noul
+    reset = tmp_postgres.psql("RESET typesafe.mock_response;")
+    assert "RESET" in reset
+
+
 CONTRIB_EXTENSIONS = (
     "pg_trgm",
     "unaccent",
@@ -807,6 +850,7 @@ RELEASE_EXTENSION_ORDER = (
     "pg_partman",
     "pgtap",
     "pg_jsonschema",
+    "pg_typesafe",
 )
 RELEASE_PRELOAD_PACKAGES = (
     "vectorchord",

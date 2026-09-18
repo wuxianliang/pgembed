@@ -87,6 +87,7 @@ def test_identical_stamp_preserves_mtime_and_complete_prefix(tmp_path: Path) -> 
         ("PGTAP_SHA256", "0" * 64),
         ("PG_JSONSCHEMA_COMMIT", "0" * 40),
         ("PG_JSONSCHEMA_PGRX_VERSION", "0.16.1"),
+        ("PG_TYPESAFE_COMMIT", "0" * 40),
         ("OPENSSL_PREFIX", "/fixture/openssl"),
     ],
 )
@@ -168,6 +169,11 @@ def test_source_lock_and_toolchain_are_recorded(tmp_path: Path) -> None:
     assert "pgtap=v1.3.4:d2c951afb296a001d21785611a8e966e3f8fa3f5bfbd929396a5130c0152f314" in text
     assert "pg_jsonschema=d08e4dea14549858b54791d6da4f606dc58a512e" in text
     assert "pg_jsonschema_pgrx=0.19.2" in text
+    assert "pg_typesafe=93a5acbb43154aea757a96adb680fb3d45a00a9a" in text
+    assert (
+        "pg_typesafe_patch=patches/pg_typesafe-pg18-noreturn.patch:"
+        "2c3635684b6906b570b5853d5b8f6dbe02869fe49b2a7683264e08c6364480b2" in text
+    )
     assert "contrib_install=v1" in text
     assert "recipe=pgembed-postgresql-18-bundle-v2" in text
     assert "postgres_configure=--without-readline --without-icu --with-libxml --with-ssl=openssl" in text
@@ -194,6 +200,7 @@ def test_all_git_sources_use_verification_markers() -> None:
         "PG_NET_SOURCE_VERIFIED",
         "PLSH_SOURCE_VERIFIED",
         "PG_JSONSCHEMA_SOURCE_VERIFIED",
+        "PG_TYPESAFE_SOURCE_VERIFIED",
     )
     for marker in markers:
         assert f"$({marker}): $(POSTGRES_BUNDLE_CONFIG_STAMP)" in makefile
