@@ -41,6 +41,7 @@ Think of it like SQLite, but with the power of PostgreSQL. Just `pip install pge
 - **Message queue**: Includes [pgmq](https://github.com/pgmq/pgmq) for a lightweight Postgres-native queue (SQS/RSMQ-style send/read/archive) and [pg_partman](https://github.com/pgpartman/pg_partman) for partitioned queues
 - **Validation & tests**: Includes [pg_jsonschema](https://github.com/supabase/pg_jsonschema) for JSON Schema checks on `json`/`jsonb`, and [pgTAP](https://pgtap.org/) for SQL-level TAP tests
 - **AI classification**: Includes [pg_typesafe](https://github.com/giuliosmall/pg_typesafe) to call TypeSafe AI (Jev) from SQL for categorical tasks — classify, detect, score, and ask (pre-alpha; requires libcurl; a one-line local patch adapts it to PG18)
+- **Indexed search engine**: Includes [stannum](https://github.com/TeamSpringbird/stannum) (a fork of PlanetScale Lead) for BM25 search with Boolean/phrase/proximity TINQL queries, highlighting, and `stannum` access-method indexes (Rust/pgrx; development software)
 - **PostgreSQL contrib**: `pg_stat_statements`, `pg_trgm`, `unaccent`, `pgcrypto`, `ltree`, `hstore`, and `postgres_fdw` are installed with the server so `CREATE EXTENSION` works without extra packages
 
 ## Quick start
@@ -169,6 +170,7 @@ pgembed bundles a curated set of PostgreSQL extensions, built specifically for P
 | [pgTAP](https://pgtap.org/) | `pgtap` | `pgtap` | — | SQL-only TAP test framework |
 | [pg_jsonschema](https://github.com/supabase/pg_jsonschema) | `pg_jsonschema` | `pg_jsonschema` | — | JSON Schema validation (Rust/pgrx) |
 | [pg_typesafe](https://github.com/giuliosmall/pg_typesafe) | `typesafe` | `pg_typesafe` | — | TypeSafe AI (Jev) categorical classification from SQL; works with a TypeSafe key or via OpenRouter's Decisions API (requires libcurl; pre-alpha, PG18-patched) |
+| [stannum](https://github.com/TeamSpringbird/stannum) | `stannum` | `stannum` | — | BM25 search engine with TINQL Boolean/phrase queries, highlighting, and exact counts under concurrent writes (Rust/pgrx; development software; fork of PlanetScale Lead) |
 
 `pgembed-pgvector` is also published as a standalone wheel; the rest are bundled into the base `pgembed` wheel.
 
@@ -181,7 +183,7 @@ import pgembed
 
 # Check which extensions are available
 print(pgembed.list_extensions())
-# {'pgvector': True, 'vectorchord': True, 'age': True, 'psql_bm25s': True, 'timescaledb': True, 'pg_cron': True, 'pg_net': True, 'pgsql_http': True, 'plsh': True, 'firebird_fdw': True, 'pgmq': True, 'pg_partman': True, 'pgtap': True, 'pg_jsonschema': True, 'pg_typesafe': True}
+# {'pgvector': True, 'vectorchord': True, 'age': True, 'psql_bm25s': True, 'timescaledb': True, 'pg_cron': True, 'pg_net': True, 'pgsql_http': True, 'plsh': True, 'firebird_fdw': True, 'pgmq': True, 'pg_partman': True, 'pgtap': True, 'pg_jsonschema': True, 'pg_typesafe': True, 'stannum': True}
 
 # Check if a specific extension is available, then create it
 if pgembed.has_extension('vectorchord'):
@@ -240,6 +242,41 @@ SELECT msg_id, message FROM pgmq.read('jobs', 30, 1);
 server.create_extension("pg_partman")
 server.psql("SELECT pgmq.create_partitioned('part_jobs');")
 ```
+
+### Full-text search with stannum
+
+`stannum` is a BM25 search engine with the TINQL query language (Boolean operators, phrases, proximity), highlighting, and exact counts under concurrent writes. Create a `stannum` access-method index and query with the `==>` operator:
+
+```python
+server.create_extension("stannum")
+server.psql("""
+CREATE TABLE documents (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    body text
+);
+INSERT INTO documents (body) VALUES
+  ('PostgreSQL supports full text search'),
+  ('A search engine with exact phrase matching');
+CREATE INDEX documents_search ON documents USING stannum (body);
+ANALYZE documents;
+""")
+
+# BM25-ranked search
+print(server.psql("""
+SELECT id, stannum.full_score(ctid) AS score
+FROM documents
+WHERE body ==> 'search'
+ORDER BY score DESC
+LIMIT 10;
+"""))
+
+# Exact phrase, highlighting, and index diagnostics
+print(server.psql("SELECT count(*) FROM documents WHERE body ==> '\"phrase matching\"';"))
+print(server.psql("SELECT stannum.highlight(body, '<mark>', '</mark>', query => 'search') FROM documents;"))
+print(server.psql("SELECT * FROM stannum.segment_info('documents_search');"))
+```
+
+`stannum` loads on demand on the primary (no `shared_preload_libraries` needed); reads on a hot standby require preloading it. It is development software, pinned to upstream `main` by commit.
 
 ### JSON Schema and pgTAP
 
@@ -347,7 +384,7 @@ pgembed's release pipeline is Darwin/Linux-only:
 
 - **macOS:** arm64 only, with deployment target **26.0**. The project does not claim Intel, universal2, or older macOS compatibility.
 - **Linux:** x86_64 and aarch64.
-- **Extensions:** the bundled extension set is built for those release targets. `pg_net` and `pgsql_http` additionally require **libcurl ≥ 7.83** (`pg_typesafe` links the same libcurl provider and needs ≥ 7.61): CI builds a private curl 8 via `tools/build_curl.sh` (auditwheel vendors `libcurl.so.4` into the Linux wheels); on macOS they link the SDK/system libcurl. Local Linux hosts need a curl that new, or run `tools/build_curl.sh` and pass `PG_NET_CURL_PREFIX` / `PGSQL_HTTP_CURL_CONFIG` (`pg_typesafe` picks the prefix up from `PG_NET_CURL_PREFIX` via pkg-config). `firebird_fdw` vendors [libfq](https://github.com/ibarwick/libfq) 0.6.2 and the Firebird 5.0.3 **client** libraries (plus libtommath on Linux); it does not ship a Firebird server. musl builds skip it. `pgcrypto` needs OpenSSL: Linux uses the distro library; macOS vendors Homebrew `openssl@3` into the prefix (`@loader_path`) because Apple no longer ships `/usr/lib/libssl`. musl builds skip VectorChord and `pg_jsonschema`.
+- **Extensions:** the bundled extension set is built for those release targets. `pg_net` and `pgsql_http` additionally require **libcurl ≥ 7.83** (`pg_typesafe` links the same libcurl provider and needs ≥ 7.61): CI builds a private curl 8 via `tools/build_curl.sh` (auditwheel vendors `libcurl.so.4` into the Linux wheels); on macOS they link the SDK/system libcurl. Local Linux hosts need a curl that new, or run `tools/build_curl.sh` and pass `PG_NET_CURL_PREFIX` / `PGSQL_HTTP_CURL_CONFIG` (`pg_typesafe` picks the prefix up from `PG_NET_CURL_PREFIX` via pkg-config). `firebird_fdw` vendors [libfq](https://github.com/ibarwick/libfq) 0.6.2 and the Firebird 5.0.3 **client** libraries (plus libtommath on Linux); it does not ship a Firebird server. musl builds skip it. `pgcrypto` needs OpenSSL: Linux uses the distro library; macOS vendors Homebrew `openssl@3` into the prefix (`@loader_path`) because Apple no longer ships `/usr/lib/libssl`. musl builds skip VectorChord, `pg_jsonschema`, and `stannum`.
 - **TigerFS** *(companion tool, not an extension)*: uses NFS on macOS and FUSE on Linux. Linux mounts require usable `/dev/fuse` access, so mount tests are normally unavailable in default containers, Google Colab, and other unprivileged sandboxes unless the host grants the needed device/capability. The embedded database and non-mount TigerFS package tests do not require FUSE.
 
 ### Preload before start
@@ -417,8 +454,11 @@ make pg_jsonschema
 # Build only pg_typesafe (needs libcurl)
 make pg_typesafe
 
+# Build only stannum (Rust/pgrx search engine)
+make stannum
+
 # Build specific combination
-make EXTENSIONS="pgvector vectorchord timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema pg_typesafe" all
+make EXTENSIONS="pgvector vectorchord timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema pg_typesafe stannum" all
 ```
 
 ## History
@@ -427,4 +467,4 @@ pgembed is a fork of [pgserver](https://github.com/orm011/pgserver), which was i
 
 - Bundled Darwin/Linux releases for macOS arm64 and Linux x86_64/aarch64
 - Robust process management and cleanup
-- Built-in pgvector, VectorChord, Apache AGE, psql_bm25s, TimescaleDB, pg_cron, pg_net, firebird_fdw, pgmq, pg_partman, pgTAP, pg_jsonschema, and pg_typesafe extensions
+- Built-in pgvector, VectorChord, Apache AGE, psql_bm25s, TimescaleDB, pg_cron, pg_net, firebird_fdw, pgmq, pg_partman, pgTAP, pg_jsonschema, pg_typesafe, and stannum extensions

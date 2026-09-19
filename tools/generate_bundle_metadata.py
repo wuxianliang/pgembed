@@ -97,6 +97,16 @@ EXTENSIONS: dict[str, dict[str, Any]] = {
         preload_name=None,
         requires_preload=False,
     ),
+    "stannum": dict(
+        version="0.1.0",
+        source_ref="e163585cb9d6b6f78b8de067a9c4aa33ea238063",
+        source_commit="e163585cb9d6b6f78b8de067a9c4aa33ea238063",
+        source_sha256=None,
+        stem="stannum",
+        create_name="stannum",
+        preload_name=None,
+        requires_preload=False,
+    ),
 }
 
 

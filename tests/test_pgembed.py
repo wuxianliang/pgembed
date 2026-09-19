@@ -528,6 +528,44 @@ SELECT typesafe_noul(
     assert "RESET" in reset
 
 
+def test_stannum(tmp_postgres):
+    _require_extension("stannum")
+    assert tmp_postgres.create_extension("stannum").strip() == "CREATE EXTENSION"
+    tmp_postgres.psql(
+        """
+CREATE TABLE stannum_documents (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, body text);
+INSERT INTO stannum_documents (body) VALUES
+  ('PostgreSQL supports full text search'),
+  ('A search engine with exact phrase matching');
+CREATE INDEX stannum_documents_search ON stannum_documents USING stannum (body);
+ANALYZE stannum_documents;
+"""
+    )
+    matches = _psql_tuples(
+        tmp_postgres,
+        "SELECT id FROM stannum_documents WHERE body ==> 'search' ORDER BY id;",
+    )
+    assert [row[0] for row in matches] == [1, 2]
+    phrase = _psql_tuples(
+        tmp_postgres,
+        "SELECT count(*) FROM stannum_documents WHERE body ==> '\"phrase matching\"';",
+    )
+    assert phrase == [(1,)]
+    highlighted = _psql_tuples(
+        tmp_postgres,
+        """
+SELECT stannum.highlight(body, '<mark>', '</mark>', query => 'search')
+FROM stannum_documents WHERE id = 1;
+""",
+    )
+    assert len(highlighted) == 1 and "<mark>search</mark>" in highlighted[0][0]
+    segments = tmp_postgres.psql(
+        "SELECT * FROM stannum.segment_info('stannum_documents_search');"
+    )
+    assert "ordinal" in segments  # header of segment_info output
+    assert "(1 row)" in segments
+
+
 CONTRIB_EXTENSIONS = (
     "pg_trgm",
     "unaccent",
@@ -851,6 +889,7 @@ RELEASE_EXTENSION_ORDER = (
     "pgtap",
     "pg_jsonschema",
     "pg_typesafe",
+    "stannum",
 )
 RELEASE_PRELOAD_PACKAGES = (
     "vectorchord",

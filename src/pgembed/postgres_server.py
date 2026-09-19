@@ -510,6 +510,7 @@ class PostgresServer:
             "pgtap": "pgtap",
             "pg_jsonschema": "pg_jsonschema",
             "pg_typesafe": "pg_typesafe",
+            "stannum": "stannum",
         }
         package_name = extension_map.get(extension_name, extension_name)
         if not pgembed.has_extension(package_name):

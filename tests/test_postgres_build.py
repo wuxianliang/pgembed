@@ -88,6 +88,8 @@ def test_identical_stamp_preserves_mtime_and_complete_prefix(tmp_path: Path) -> 
         ("PG_JSONSCHEMA_COMMIT", "0" * 40),
         ("PG_JSONSCHEMA_PGRX_VERSION", "0.16.1"),
         ("PG_TYPESAFE_COMMIT", "0" * 40),
+        ("STANNUM_COMMIT", "0" * 40),
+        ("STANNUM_PGRX_VERSION", "0.16.1"),
         ("OPENSSL_PREFIX", "/fixture/openssl"),
     ],
 )
@@ -174,6 +176,8 @@ def test_source_lock_and_toolchain_are_recorded(tmp_path: Path) -> None:
         "pg_typesafe_patch=patches/pg_typesafe-pg18-noreturn.patch:"
         "2c3635684b6906b570b5853d5b8f6dbe02869fe49b2a7683264e08c6364480b2" in text
     )
+    assert "stannum=e163585cb9d6b6f78b8de067a9c4aa33ea238063" in text
+    assert "stannum_pgrx=0.19.1" in text
     assert "contrib_install=v1" in text
     assert "recipe=pgembed-postgresql-18-bundle-v2" in text
     assert "postgres_configure=--without-readline --without-icu --with-libxml --with-ssl=openssl" in text
@@ -201,6 +205,7 @@ def test_all_git_sources_use_verification_markers() -> None:
         "PLSH_SOURCE_VERIFIED",
         "PG_JSONSCHEMA_SOURCE_VERIFIED",
         "PG_TYPESAFE_SOURCE_VERIFIED",
+        "STANNUM_SOURCE_VERIFIED",
     )
     for marker in markers:
         assert f"$({marker}): $(POSTGRES_BUNDLE_CONFIG_STAMP)" in makefile

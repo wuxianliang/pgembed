@@ -73,6 +73,7 @@ def test_release_bundle_contains_complete_attested_extension_set() -> None:
         "pgtap",
         "pg_jsonschema",
         "pg_typesafe",
+        "stannum",
     }
     assert set(metadata.extensions) == expected
 
@@ -140,6 +141,17 @@ def test_release_bundle_contains_complete_attested_extension_set() -> None:
     assert typesafe.source_commit == "93a5acbb43154aea757a96adb680fb3d45a00a9a"
     library_path = bundle_root / typesafe.library
     assert library_path.is_file(), f"typesafe library is missing: {library_path}"
+
+    stannum = metadata.extensions["stannum"]
+    assert stannum.requires_preload is False
+    assert stannum.preload_name is None
+    assert stannum.create_name == "stannum"
+    assert stannum.version == "0.1.0"
+    assert stannum.has_library is True
+    assert stannum.library is not None
+    assert stannum.source_commit == "e163585cb9d6b6f78b8de067a9c4aa33ea238063"
+    stannum_library_path = bundle_root / stannum.library
+    assert stannum_library_path.is_file(), f"stannum library is missing: {stannum_library_path}"
 
     firebird = metadata.extensions["firebird_fdw"]
     assert firebird.requires_preload is False

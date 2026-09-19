@@ -46,9 +46,9 @@ RUST_EXTENSIONS_SUPPORTED := $(if $(filter 1,$(IS_MUSL)),0,1)
 BUILD_JOBS ?= $(shell n=$$(sysctl -n hw.ncpu 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4); if [ $$n -gt 8 ]; then echo 8; else echo $$n; fi)
 
 ifeq ($(RUST_EXTENSIONS_SUPPORTED),1)
-EXTENSIONS ?= pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema pg_typesafe tigerfs
+EXTENSIONS ?= pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema pg_typesafe tigerfs stannum
 else
-EXTENSIONS ?= pgvector age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_typesafe tigerfs
+EXTENSIONS ?= pgvector age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema pg_typesafe tigerfs stannum
 endif
 REQUESTED_EXTENSIONS := $(strip $(EXTENSIONS))
 UNSUPPORTED_EXTENSIONS :=
@@ -56,7 +56,7 @@ ifeq ($(HAS_LIBCURL),0)
 UNSUPPORTED_EXTENSIONS += pg_net pgsql_http pg_typesafe
 endif
 ifeq ($(RUST_EXTENSIONS_SUPPORTED),0)
-UNSUPPORTED_EXTENSIONS += vectorchord pg_jsonschema
+UNSUPPORTED_EXTENSIONS += vectorchord pg_jsonschema stannum
 endif
 ifeq ($(IS_MUSL),1)
 UNSUPPORTED_EXTENSIONS += firebird_fdw
@@ -269,7 +269,20 @@ TIGERFS_SHA256_Darwin_x86_64 := c62f7017e63750de4ae9375fb9becb1a50f0006ed44dfaee
 TIGERFS_EXPECTED_SHA256 := $(TIGERFS_SHA256_$(TIGERFS_OS)_$(TIGERFS_ARCH))
 TIGERFS_SELECTED := $(filter tigerfs,$(EXTENSIONS) $(MAKECMDGOALS))
 
-NATIVE_BUILD_DIRS := $(POSTGRES_SRC) $(POSTGRES_BLD) $(PGVECTOR_DIR) $(VECTORCHORD_DIR) $(AGE_DIR) $(PSQL_BM25S_DIR) $(TIMESCALEDB_DIR) $(PG_CRON_DIR) $(PG_NET_DIR) $(PGSQL_HTTP_DIR) $(PLSH_DIR) $(FIREBIRD_FDW_DIR) $(LIBFQ_DIR) $(LIBTOMMATH_DIR) $(FIREBIRD_FDW_DEPS_DIR) $(PGMQ_DIR) $(PG_PARTMAN_DIR) $(PGTAP_DIR) $(PG_JSONSCHEMA_DIR) $(PG_TYPESAFE_DIR)
+# pgrx extension (Rust). Pinned by commit, not a tag: the repository has no
+# tags yet (development software). The extension crate lives in the postgres/
+# workspace member, so the build runs there. cargo-pgrx 0.19.1 is installed
+# into the source tree so it does not collide with VectorChord's 0.17.0 or
+# pg_jsonschema's 0.19.2 CLIs.
+STANNUM_COMMIT := e163585cb9d6b6f78b8de067a9c4aa33ea238063
+STANNUM_REPO := https://github.com/TeamSpringbird/stannum.git
+STANNUM_DIR := stannum-$(STANNUM_COMMIT)
+STANNUM_SOURCE_VERIFIED := $(STANNUM_DIR)/.pgembed-source-verified
+STANNUM_PGRX_VERSION := 0.19.1
+STANNUM_PGRX_ROOT := $(STANNUM_DIR)/.pgrx-cli
+STANNUM_PGRX_HOME := $(STANNUM_DIR)/.pgrx-home
+
+NATIVE_BUILD_DIRS := $(POSTGRES_SRC) $(POSTGRES_BLD) $(PGVECTOR_DIR) $(VECTORCHORD_DIR) $(AGE_DIR) $(PSQL_BM25S_DIR) $(TIMESCALEDB_DIR) $(PG_CRON_DIR) $(PG_NET_DIR) $(PGSQL_HTTP_DIR) $(PLSH_DIR) $(FIREBIRD_FDW_DIR) $(LIBFQ_DIR) $(LIBTOMMATH_DIR) $(FIREBIRD_FDW_DEPS_DIR) $(PGMQ_DIR) $(PG_PARTMAN_DIR) $(PGTAP_DIR) $(PG_JSONSCHEMA_DIR) $(PG_TYPESAFE_DIR) $(STANNUM_DIR)
 
 .PHONY: FORCE
 FORCE:
@@ -329,6 +342,8 @@ $(POSTGRES_BUNDLE_CONFIG_STAMP): FORCE
 		'pg_jsonschema_pgrx=$(PG_JSONSCHEMA_PGRX_VERSION)' \
 		'pg_typesafe=$(PG_TYPESAFE_COMMIT)' \
 		'pg_typesafe_patch=$(PG_TYPESAFE_PATCH):$(PG_TYPESAFE_PATCH_SHA256)' \
+		'stannum=$(STANNUM_COMMIT)' \
+		'stannum_pgrx=$(STANNUM_PGRX_VERSION)' \
 		'contrib_install=v1' \
 		'openssl_prefix=$(OPENSSL_PREFIX)' \
 		'tigerfs=$(TIGERFS_TAG):$(TIGERFS_OS):$(TIGERFS_ARCH):$(TIGERFS_EXPECTED_SHA256)' \
@@ -342,7 +357,7 @@ $(POSTGRES_BUNDLE_CONFIG_STAMP): FORCE
 	rm -rf "$(INSTALL_PREFIX)" $(NATIVE_BUILD_DIRS); \
 	mv -f "$$tmp" "$@"
 
-.PHONY: all postgres pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema pg_typesafe tigerfs relativize bundle-metadata
+.PHONY: all postgres pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema pg_typesafe tigerfs stannum relativize bundle-metadata
 all: postgres $(EXTENSIONS) relativize bundle-metadata
 postgres: $(INSTALL_PREFIX)/bin/postgres
 pgvector: postgres $(INSTALL_PREFIX)/lib/postgresql/vector.$(PG_DLSUFFIX)
@@ -371,6 +386,12 @@ pg_jsonschema:
 endif
 pg_typesafe: postgres $(INSTALL_PREFIX)/lib/postgresql/typesafe.$(PG_DLSUFFIX)
 tigerfs: postgres $(INSTALL_PREFIX)/bin/tigerfs
+ifeq ($(RUST_EXTENSIONS_SUPPORTED),1)
+stannum: postgres $(INSTALL_PREFIX)/lib/postgresql/stannum.$(PG_DLSUFFIX)
+else
+stannum:
+	$(error stannum is unsupported on musl)
+endif
 
 $(POSTGRES_SOURCE_VERIFIED): $(POSTGRES_BUNDLE_CONFIG_STAMP)
 	@set -eu; \
@@ -719,6 +740,32 @@ $(INSTALL_PREFIX)/lib/postgresql/typesafe.$(PG_DLSUFFIX): $(POSTGRES_BUNDLE_CONF
 	unset MAKELEVEL MAKEFLAGS MFLAGS; \
 	$(MAKE) -C $(PG_TYPESAFE_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config -j$(BUILD_JOBS); \
 	$(MAKE) -C $(PG_TYPESAFE_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config install
+
+$(STANNUM_SOURCE_VERIFIED): $(POSTGRES_BUNDLE_CONFIG_STAMP)
+	@set -eu; \
+	rm -rf "$(STANNUM_DIR)"; \
+	git init "$(STANNUM_DIR)"; \
+	git -C "$(STANNUM_DIR)" remote add origin "$(STANNUM_REPO)"; \
+	git -C "$(STANNUM_DIR)" fetch --depth 1 origin "$(STANNUM_COMMIT)"; \
+	git -C "$(STANNUM_DIR)" checkout --detach FETCH_HEAD; \
+	test "$$(git -C "$(STANNUM_DIR)" rev-parse HEAD)" = "$(STANNUM_COMMIT)"; \
+	test -f "$(STANNUM_DIR)/postgres/Cargo.toml"; \
+	touch "$@"
+
+$(INSTALL_PREFIX)/lib/postgresql/stannum.$(PG_DLSUFFIX): $(POSTGRES_BUNDLE_CONFIG_STAMP) $(STANNUM_SOURCE_VERIFIED) $(INSTALL_PREFIX)/bin/postgres
+ifeq ($(RUST_EXTENSIONS_SUPPORTED),1)
+	@set -eu; \
+	export PATH="$$HOME/.cargo/bin:$$PATH" RUSTUP_TOOLCHAIN="$(RUST_TOOLCHAIN)"; \
+	if ! "$(STANNUM_PGRX_ROOT)/bin/cargo-pgrx" --version 2>/dev/null | grep -q '$(STANNUM_PGRX_VERSION)'; then \
+		cargo install cargo-pgrx --version "$(STANNUM_PGRX_VERSION)" --locked --root "$(STANNUM_PGRX_ROOT)"; \
+	fi; \
+	export PATH="$(abspath $(STANNUM_PGRX_ROOT))/bin:$$PATH" PGRX_HOME="$(abspath $(STANNUM_PGRX_HOME))"; \
+	unset MAKELEVEL MAKEFLAGS MFLAGS; \
+	cargo pgrx init --pg18="$(INSTALL_PREFIX)/bin/pg_config"; \
+	cd "$(STANNUM_DIR)/postgres" && cargo pgrx install --release --no-default-features --features pg18 --pg-config "$(INSTALL_PREFIX)/bin/pg_config"
+else
+	$(error stannum is unsupported on musl)
+endif
 
 $(TIGERFS_CONFIG_STAMP): FORCE
 	@set -eu; \
