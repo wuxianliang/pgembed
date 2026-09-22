@@ -41,7 +41,7 @@ Think of it like SQLite, but with the power of PostgreSQL. Just `pip install pge
 - **Message queue**: Includes [pgmq](https://github.com/pgmq/pgmq) for a lightweight Postgres-native queue (SQS/RSMQ-style send/read/archive) and [pg_partman](https://github.com/pgpartman/pg_partman) for partitioned queues
 - **Validation & tests**: Includes [pg_jsonschema](https://github.com/supabase/pg_jsonschema) for JSON Schema checks on `json`/`jsonb`, and [pgTAP](https://pgtap.org/) for SQL-level TAP tests
 - **AI classification**: Includes [pg_typesafe](https://github.com/giuliosmall/pg_typesafe) to call TypeSafe AI (Jev) from SQL for categorical tasks — classify, detect, score, and ask (pre-alpha; requires libcurl; a one-line local patch adapts it to PG18)
-- **Indexed search engine**: Includes [stannum](https://github.com/TeamSpringbird/stannum) (a fork of PlanetScale Lead) for BM25 search with Boolean/phrase/proximity TINQL queries, highlighting, and `stannum` access-method indexes (Rust/pgrx; development software)
+- **Indexed search engine**: Includes [stannum](https://github.com/wuxianliang/stannum) (our fork of TeamSpringbird/stannum, a fork of PlanetScale Lead; carries the `jieba` word-level Chinese tokenizer) for BM25 search with Boolean/phrase/proximity TINQL queries, highlighting, and `stannum` access-method indexes (Rust/pgrx; development software)
 - **PostgreSQL contrib**: `pg_stat_statements`, `pg_trgm`, `unaccent`, `pgcrypto`, `ltree`, `hstore`, and `postgres_fdw` are installed with the server so `CREATE EXTENSION` works without extra packages
 
 ## Quick start
@@ -170,7 +170,7 @@ pgembed bundles a curated set of PostgreSQL extensions, built specifically for P
 | [pgTAP](https://pgtap.org/) | `pgtap` | `pgtap` | — | SQL-only TAP test framework |
 | [pg_jsonschema](https://github.com/supabase/pg_jsonschema) | `pg_jsonschema` | `pg_jsonschema` | — | JSON Schema validation (Rust/pgrx) |
 | [pg_typesafe](https://github.com/giuliosmall/pg_typesafe) | `typesafe` | `pg_typesafe` | — | TypeSafe AI (Jev) categorical classification from SQL; works with a TypeSafe key or via OpenRouter's Decisions API (requires libcurl; pre-alpha, PG18-patched) |
-| [stannum](https://github.com/TeamSpringbird/stannum) | `stannum` | `stannum` | — | BM25 search engine with TINQL Boolean/phrase queries, highlighting, and exact counts under concurrent writes (Rust/pgrx; development software; fork of PlanetScale Lead) |
+| [stannum](https://github.com/wuxianliang/stannum) | `stannum` | `stannum` | — | BM25 search engine with TINQL Boolean/phrase queries, highlighting, and exact counts under concurrent writes (Rust/pgrx; development software; our fork of TeamSpringbird/stannum with the `jieba` tokenizer) |
 
 `pgembed-pgvector` is also published as a standalone wheel; the rest are bundled into the base `pgembed` wheel.
 
@@ -276,7 +276,24 @@ print(server.psql("SELECT stannum.highlight(body, '<mark>', '</mark>', query => 
 print(server.psql("SELECT * FROM stannum.segment_info('documents_search');"))
 ```
 
-`stannum` loads on demand on the primary (no `shared_preload_libraries` needed); reads on a hot standby require preloading it. It is development software, pinned to upstream `main` by commit.
+For mixed Chinese/English corpora, create the index with the optional `jieba`
+tokenizer for word-level Chinese segmentation (dictionary-based; the default
+`unicode` tokenizer analyzes Han text per character, so a Chinese query term
+matches as a character-adjacency phrase instead):
+
+```python
+server.psql("""
+CREATE INDEX documents_search_cn ON documents USING stannum (body)
+  WITH (tokenizer = 'jieba');
+""")
+print(server.psql("SELECT count(*) FROM documents WHERE body ==> '数据库';"))
+print(server.psql("""
+SELECT string_agg(tok, '/') FROM stannum.tokenize(
+    'PostgreSQL 是开源数据库', tokenizer => 'jieba') AS t(tok);
+"""))  # postgresql/是/开源/数据库
+```
+
+`stannum` loads on demand on the primary (no `shared_preload_libraries` needed); reads on a hot standby require preloading it. It is development software, pinned to our fork's `main` by commit.
 
 ### JSON Schema and pgTAP
 

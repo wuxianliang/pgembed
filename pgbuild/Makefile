@@ -269,13 +269,14 @@ TIGERFS_SHA256_Darwin_x86_64 := c62f7017e63750de4ae9375fb9becb1a50f0006ed44dfaee
 TIGERFS_EXPECTED_SHA256 := $(TIGERFS_SHA256_$(TIGERFS_OS)_$(TIGERFS_ARCH))
 TIGERFS_SELECTED := $(filter tigerfs,$(EXTENSIONS) $(MAKECMDGOALS))
 
-# pgrx extension (Rust). Pinned by commit, not a tag: the repository has no
-# tags yet (development software). The extension crate lives in the postgres/
-# workspace member, so the build runs there. cargo-pgrx 0.19.1 is installed
-# into the source tree so it does not collide with VectorChord's 0.17.0 or
-# pg_jsonschema's 0.19.2 CLIs.
-STANNUM_COMMIT := e163585cb9d6b6f78b8de067a9c4aa33ea238063
-STANNUM_REPO := https://github.com/TeamSpringbird/stannum.git
+# pgrx extension (Rust). Pinned by commit to our fork (wuxianliang/stannum),
+# which carries the optional jieba tokenizer for word-level Chinese
+# segmentation; never push to the upstream TeamSpringbird repository. The
+# extension crate lives in the postgres/ workspace member, so the build runs
+# there. cargo-pgrx 0.19.1 is installed into the source tree so it does not
+# collide with VectorChord's 0.17.0 or pg_jsonschema's 0.19.2 CLIs.
+STANNUM_COMMIT := 6d02ec79b92891c18375491e79319ea5880c3e97
+STANNUM_REPO := https://github.com/wuxianliang/stannum.git
 STANNUM_DIR := stannum-$(STANNUM_COMMIT)
 STANNUM_SOURCE_VERIFIED := $(STANNUM_DIR)/.pgembed-source-verified
 STANNUM_PGRX_VERSION := 0.19.1
