@@ -730,6 +730,27 @@ def test_search_limit_zero_returns_no_rows(docs_index: StannumIndex) -> None:
     assert docs_index.search("database", limit=0) == []
 
 
+def test_search_custom_tags_appear_in_the_snippet(docs_index: StannumIndex) -> None:
+    hits = docs_index.search("database", limit=5, begin_tag="<em>", end_tag="</em>")
+    assert {hit.id for hit in hits} == {1, 2}
+    for hit in hits:
+        assert "<em>database</em>" in hit.snippet
+        assert "<mark>" not in hit.snippet
+
+
+def test_search_custom_tags_ignored_in_ansi_mode(docs_index: StannumIndex) -> None:
+    # The SRF's ansi renderer highlights with escape sequences, not tags:
+    # passed tags are accepted but have no effect on the snippet.
+    hits = docs_index.search(
+        "database", limit=5, snippet="ansi", begin_tag="<em>", end_tag="</em>"
+    )
+    assert hits
+    for hit in hits:
+        assert "\x1b[" in hit.snippet
+        assert "<em>" not in hit.snippet
+        assert "</em>" not in hit.snippet
+
+
 # -- analysis(): stamp fields and drift states ---------------------------------------
 
 
@@ -845,6 +866,33 @@ def test_drop_stop_words_loads_the_preset_from_the_srf_at_runtime() -> None:
     assert connection.log[1][0].startswith("SELECT tok FROM stannum.tokenize(")
     assert connection.log[1][1] == ("anything", "jieba")
     assert connection.closed
+
+
+def test_search_omits_tag_parameters_when_not_passed() -> None:
+    # Omitted tags must leave the statement byte-identical: no begin_tag/
+    # end_tag in the SQL and the parameter tuple unchanged, so the SRF
+    # defaults apply for existing callers.
+    connection = _ScriptedConnection([[], []])
+    index = _ScriptedIndex(connection)
+    index.search("database")
+    sql, params = connection.log[0]
+    assert "begin_tag" not in sql
+    assert "end_tag" not in sql
+    assert params == ("docs_body_stannum_idx", "database", 5, "html")
+    # Passed tags ride as bound parameters, never string interpolation.
+    index.search("database", begin_tag="<em>", end_tag="</em>")
+    sql, params = connection.log[1]
+    assert '"begin_tag" => %s, "end_tag" => %s' in sql
+    assert sql.count("%s") == 6
+    assert "<em>" not in sql and "</em>" not in sql
+    assert params == (
+        "docs_body_stannum_idx",
+        "database",
+        5,
+        "html",
+        "<em>",
+        "</em>",
+    )
 
 
 # -- identifier quoting end to end (schema-qualified and quote-bearing names) ---------

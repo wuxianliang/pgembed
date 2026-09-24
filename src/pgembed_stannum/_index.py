@@ -181,6 +181,8 @@ class StannumIndex:
         limit: int = 5,
         snippet: str = "html",
         drop_stop_words: bool = False,
+        begin_tag: Optional[str] = None,
+        end_tag: Optional[str] = None,
     ) -> list[SearchHit]:
         """Run one parameterized ``stannum.search`` joined on ``d.ctid = s.ctid``.
 
@@ -190,11 +192,26 @@ class StannumIndex:
         ('auto')``, loaded from the SRF at runtime) are dropped, and the
         remaining tokens are re-joined quoted as exact terms with implicit
         AND. If nothing remains, there are no hits.
+
+        ``begin_tag``/``end_tag`` override the snippet's highlight tags
+        (SRF defaults ``<mark>``/``</mark>``); when ``None`` (the default) the
+        parameters are omitted entirely so the SRF defaults — and the
+        generated SQL — are unchanged for existing callers. They only affect
+        snippet rendering in ``html`` mode; ``ansi`` mode ignores them and
+        renders escape sequences (matching the SRF).
         """
         if drop_stop_words:
             query = self._strip_stop_words(query)
             if not query:
                 return []
+        srf_args = '"limit" => %s, "snippet" => %s'
+        params: tuple[Any, ...] = (self._index_ref_param(), query, limit, snippet)
+        if begin_tag is not None:
+            srf_args += ', "begin_tag" => %s'
+            params += (begin_tag,)
+        if end_tag is not None:
+            srf_args += ', "end_tag" => %s'
+            params += (end_tag,)
         conn = self._connect()
         try:
             with conn.cursor() as cursor:
@@ -202,11 +219,10 @@ class StannumIndex:
                     f"SELECT d.{self._id_ref()} AS id, s.ctid::text AS ctid,"
                     f" s.score::float8 AS score, s.snippet"
                     f" FROM {self._table_ref()} d"
-                    f" JOIN stannum.search(%s::regclass, %s,"
-                    f' "limit" => %s, "snippet" => %s) AS s'
+                    f" JOIN stannum.search(%s::regclass, %s, {srf_args}) AS s"
                     f" ON d.ctid = s.ctid"
                     f" ORDER BY s.score DESC, d.{self._id_ref()}",
-                    (self._index_ref_param(), query, limit, snippet),
+                    params,
                 )
                 rows = cursor.fetchall()
         finally:
