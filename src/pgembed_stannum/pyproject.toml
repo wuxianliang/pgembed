@@ -1,0 +1,28 @@
+# Standalone-wheel metadata placeholder (phase 2 of the pgembed_stannum
+# packaging plan). The phase-1 base wheel bundles this package into pgembed
+# via the root pyproject's `pgembed*` include glob; this file is not used
+# until the standalone pgembed-stannum wheel pipeline exists (staged
+# stannum.{so,dylib} + control + SQL under package-local
+# pginstall/share/postgresql/extension, per-OS/arch CI matrix, wheel
+# dependency audit).
+[project]
+name = "pgembed-stannum"
+version = "0.3.0rc2"
+description = "stannum BM25 full-text search extension for pgembed"
+requires-python = ">=3.12"
+dependencies = [
+    "pgembed>=0.3.0rc2,<0.4",
+    "psycopg2-binary>=2.9",
+]
+
+[project.optional-dependencies]
+langchain = ["langchain-core>=0.3"]
+llama-index = ["llama-index-core>=0.11"]
+test = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[build-system]
+requires = ["setuptools>=58.0.0", "wheel"]
+build-backend = "setuptools.build_meta"

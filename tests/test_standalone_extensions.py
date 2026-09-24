@@ -12,6 +12,7 @@ import pytest
     ("module_name", "library_name", "control_name"),
     [
         ("pgembed_pgvector", "vector.dylib", "pgvector.control"),
+        ("pgembed_stannum", "stannum.dylib", "stannum.control"),
     ],
 )
 def test_standalone_helpers_never_fall_back_to_bundled_artifacts(

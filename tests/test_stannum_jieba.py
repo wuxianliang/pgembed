@@ -123,3 +123,43 @@ def test_jieba_full_score_ranks_matches(
         if line.strip()[:1].isdigit():
             fields = [field for field in line.split() if field != "|"]
             assert float(fields[1]) > 0.0
+
+
+def test_dictionary_drift_reindex_and_presets(
+    stannum_server: pgembed.PostgresServer,
+) -> None:
+    pg = stannum_server
+    assert scalar(pg, "SELECT extversion FROM pg_extension WHERE extname='stannum';") == "0.3.0"
+    assert scalar(pg, "SELECT matches FROM stannum.index_analysis('docs_jieba');") == "t"
+    before = scalar(pg, "SELECT stannum.jieba_dict_version();")
+    pg.psql("SELECT stannum.jieba_add_word('星河数据库协议', 1000000, 'n');")
+    assert scalar(pg, "SELECT stannum.jieba_dict_version();") != before
+    assert scalar(pg, """
+        SELECT string_agg(tok, '/') FROM stannum.tokenize(
+            '星河数据库协议', tokenizer => 'jieba') AS t(tok);
+    """) == "星河数据库协议"
+    assert scalar(pg, "SELECT matches FROM stannum.index_analysis('docs_jieba');") == "f"
+    assert scalar(pg, """
+        SELECT matches IS NULL AND status = 'not applicable'
+        FROM stannum.index_analysis('docs_default');
+    """) == "t"
+    pg.psql("REINDEX INDEX docs_jieba;")
+    assert scalar(pg, "SELECT matches FROM stannum.index_analysis('docs_jieba');") == "t"
+    assert scalar(pg, """
+        SELECT count(*) BETWEEN 150 AND 200
+        FROM stannum.builtin_stop_words('zh');
+    """) == "t"
+    pg.psql("""
+        ALTER INDEX docs_jieba SET (score_stop_words = 'auto:zh');
+        INSERT INTO docs VALUES (6, '的 数据库', '的 数据库');
+    """)
+    assert scalar(pg, """
+        SELECT count(*) FROM stannum.score_inspect('docs_jieba', '的', 1.1);
+    """) == "0"
+    assert scalar(pg, """
+        SELECT bool_and(stannum.score(ctid, dense_ratio => 1.1) = 0
+                        AND stannum.full_score(ctid) > 0)
+        FROM docs WHERE body_jieba ==> '的';
+    """) == "t"
+    pg.psql("SELECT stannum.jieba_delete_word('星河数据库协议');")
+    assert scalar(pg, "SELECT stannum.jieba_dict_version();") == before

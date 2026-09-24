@@ -58,7 +58,7 @@ EXTENSION_PACKAGES = {
     "pgtap": None,
     "pg_jsonschema": None,
     "pg_typesafe": None,
-    "stannum": None,
+    "stannum": "pgembed_stannum",
 }
 
 EXTENSION_ARTIFACT_STEMS = {
