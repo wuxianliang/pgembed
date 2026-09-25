@@ -176,7 +176,7 @@ def test_source_lock_and_toolchain_are_recorded(tmp_path: Path) -> None:
         "pg_typesafe_patch=patches/pg_typesafe-pg18-noreturn.patch:"
         "2c3635684b6906b570b5853d5b8f6dbe02869fe49b2a7683264e08c6364480b2" in text
     )
-    assert "stannum=7f58bbe72c08b58f0f4cbd125075dadf621de06f" in text
+    assert "stannum=ad4d3b74d9c903d14b32cc000b42d15e2b7ef26b" in text
     assert "stannum_pgrx=0.19.1" in text
     assert "contrib_install=v1" in text
     assert "recipe=pgembed-postgresql-18-bundle-v2" in text

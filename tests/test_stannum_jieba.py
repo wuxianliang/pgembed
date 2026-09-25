@@ -129,7 +129,7 @@ def test_dictionary_drift_reindex_and_presets(
     stannum_server: pgembed.PostgresServer,
 ) -> None:
     pg = stannum_server
-    assert scalar(pg, "SELECT extversion FROM pg_extension WHERE extname='stannum';") == "0.3.0"
+    assert scalar(pg, "SELECT extversion FROM pg_extension WHERE extname='stannum';") == "0.4.0"
     assert scalar(pg, "SELECT matches FROM stannum.index_analysis('docs_jieba');") == "t"
     before = scalar(pg, "SELECT stannum.jieba_dict_version();")
     pg.psql("SELECT stannum.jieba_add_word('星河数据库协议', 1000000, 'n');")
