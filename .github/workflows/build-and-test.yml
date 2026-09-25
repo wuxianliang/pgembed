@@ -309,6 +309,10 @@ jobs:
           CIBW_ARCHS: ${{ matrix.arch }}
           CIBW_BUILD: cp312-* cp313-* cp314-*
           CIBW_SKIP: '*-musllinux_*'
+          # The staged project ships the native library as package data, so
+          # setuptools tags it pure (py3-none-any) unless bdist_wheel gets an
+          # explicit plat-name; auditwheel repair re-tags to manylinux_2_28.
+          CIBW_CONFIG_SETTINGS: "--build-option=--plat-name=linux_${{ matrix.arch }}"
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
           CIBW_BEFORE_ALL_LINUX: |
@@ -367,7 +371,10 @@ jobs:
       - name: Install wheel and runtime test dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install "$(find dist -name '*cp312*.whl' | head -n 1)" pytest psycopg2-binary sqlalchemy sqlalchemy-utils
+          # sqlalchemy-utils (0.42.1) still imports ScalarAttributeImpl, which
+          # SQLAlchemy 2.1 renamed to _ScalarAttributeImpl; stay on 2.0 until
+          # it catches up so test collection works.
+          python -m pip install "$(find dist -name '*cp312*.whl' | head -n 1)" pytest psycopg2-binary 'sqlalchemy<2.1' sqlalchemy-utils
       - name: Installed-wheel smoke
         run: |
           mkdir -p test-reports
