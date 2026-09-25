@@ -7,6 +7,8 @@ Identifiers are quoted via :mod:`pgembed_stannum._sql`.
 
 from __future__ import annotations
 
+import math
+import struct
 from dataclasses import dataclass
 from typing import Any, Optional, Sequence
 
@@ -73,15 +75,67 @@ def _quote_tinql_phrase_token(token: str) -> str:
     return f'"{escaped}"'
 
 
+def _format_field_weights(field_weights: dict[str, float]) -> str:
+    """Validate a field_weights mapping and render the reloption's value.
+
+    Mirrors the SQL side's rules so bad input fails before any connection:
+    at least two columns, column names free of the ``,`` and ``:``
+    separators, and weights that parse back as finite positive f32 values
+    (the server reads each entry with ``f32::from_str``). Entries are
+    emitted in mapping order as ``name:weight``.
+    """
+    if not isinstance(field_weights, dict):
+        raise ValueError(
+            "field_weights must be a dict of column name -> weight, got"
+            f" {type(field_weights).__name__}"
+        )
+    if len(field_weights) < 2:
+        raise ValueError(
+            "field_weights needs at least two columns; stannum single-column"
+            " indexes take no weights"
+        )
+    if len(field_weights) > 16:
+        raise ValueError(
+            f"field_weights supports at most 16 columns, got {len(field_weights)}"
+        )
+    entries: list[str] = []
+    for name, weight in field_weights.items():
+        if not isinstance(name, str) or not name or "," in name or ":" in name:
+            raise ValueError(
+                "field_weights column names must be non-empty strings without"
+                f" ',' or ':', got {name!r}"
+            )
+        if isinstance(weight, bool) or not isinstance(weight, (int, float)):
+            raise ValueError(
+                f"field_weights[{name!r}] must be a number, got {weight!r}"
+            )
+        try:
+            value = float(weight)
+            as_f32 = struct.unpack("f", struct.pack("f", value))[0]
+        except (OverflowError, struct.error):
+            raise ValueError(
+                f"field_weights[{name!r}] must be a finite positive number,"
+                f" got {weight!r}"
+            ) from None
+        if not math.isfinite(as_f32) or as_f32 <= 0.0:
+            raise ValueError(
+                f"field_weights[{name!r}] must be a finite positive number,"
+                f" got {weight!r}"
+            )
+        entries.append(f"{name}:{value!r}")
+    return ",".join(entries)
+
+
 class StannumIndex:
-    """Manage one stannum BM25 index on a table column and search it.
+    """Manage one stannum BM25 index on one or more table columns and search it.
 
     Parameters mirror the plan's P0-1 API: ``table`` may be schema-qualified
     (1-2 parts), ``tokenizer`` is the index's ``tokenizer`` reloption,
     ``id_column`` is the column returned by :meth:`search` /
     :meth:`hybrid_search`, and ``index_name`` overrides the default name
     ``{table}_{column}_stannum_idx`` (truncated to the identifier limit with a
-    deterministic hash suffix when too long).
+    deterministic hash suffix when too long). Pass ``field_weights`` to
+    :meth:`create` for a multi-column BM25F index (stannum 0.4.0).
     """
 
     def __init__(
@@ -138,14 +192,25 @@ class StannumIndex:
     def create(self, *, field_weights: Optional[dict[str, float]] = None) -> None:
         """Create the extension (if needed) and the stannum index.
 
-        Idempotent: both statements use ``IF NOT EXISTS``. ``field_weights``
-        is rejected until multi-column BM25F (LSG4) ships.
+        Idempotent: both statements use ``IF NOT EXISTS``.
+
+        ``field_weights`` creates a multi-column BM25F index (stannum 0.4.0):
+        the mapping's keys are the index's key columns in DDL order and its
+        values are their finite positive weights (stannum requires the
+        weights to cover every key column, which the keys-as-columns form
+        guarantees). The mapping must name at least two columns, and column
+        names containing ``,`` or ``:`` cannot be spelled in the reloption
+        and are rejected. Without ``field_weights`` the index stays
+        single-column on ``column``.
         """
+        columns = self._column_ref()
+        options = f"tokenizer = '{self._tokenizer}'"
         if field_weights is not None:
-            raise NotImplementedError(
-                "field_weights requires LSG4 multi-column BM25F (stannum P0-2); "
-                "not supported by this release"
-            )
+            weights = _format_field_weights(field_weights)
+            columns = ", ".join(quote_ident(name) for name in field_weights)
+            # The utility statement takes no bind parameters, so the weights
+            # ride as an escaped string literal (single quotes doubled).
+            options += ", field_weights = '" + weights.replace("'", "''") + "'"
         conn = self._connect()
         try:
             with conn.cursor() as cursor:
@@ -155,8 +220,8 @@ class StannumIndex:
                     # creates the index in the ON-table's schema. The qualified
                     # reference stays correct for DROP INDEX and regclass casts.
                     f"CREATE INDEX IF NOT EXISTS {quote_ident(self._index_name)}"
-                    f" ON {self._table_ref()} USING stannum ({self._column_ref()})"
-                    f" WITH (tokenizer = '{self._tokenizer}')"
+                    f" ON {self._table_ref()} USING stannum ({columns})"
+                    f" WITH ({options})"
                 )
             conn.commit()
         finally:

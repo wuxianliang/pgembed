@@ -142,9 +142,136 @@ def test_drop_is_idempotent(
     ) == "0"
 
 
-def test_field_weights_rejected_until_lsg4(docs_index: StannumIndex) -> None:
-    with pytest.raises(NotImplementedError, match="LSG4"):
-        docs_index.create(field_weights={"title": 2.0})
+# -- multi-column BM25F (0.4.0 field_weights) ---------------------------------
+
+FIELD_DOCS_SQL = """
+CREATE TABLE field_docs (id int PRIMARY KEY, title text, body text);
+INSERT INTO field_docs VALUES
+ (1, 'needle', 'filler'),
+ (2, 'filler', 'needle');
+"""
+
+
+def test_field_weights_invalid_input_is_rejected_before_connecting() -> None:
+    index = StannumIndex(_ConnectionProbeServer(), "docs", "body")
+    invalid = [
+        "title:2.0",  # not a mapping
+        {"title": 2.0},  # fewer than two columns
+        {f"c{i}": 1.0 for i in range(17)},  # more than the 16-column limit
+        {1: 2.0, "body": 1.0},  # non-string column name
+        {"": 2.0, "body": 1.0},  # empty column name
+        {"ti,tle": 2.0, "body": 1.0},  # ',' separates reloption entries
+        {"ti:tle": 2.0, "body": 1.0},  # ':' separates name and weight
+        {"title": True, "body": 1.0},  # bool is not a weight
+        {"title": "2.0", "body": 1.0},  # nor is a string
+        {"title": None, "body": 1.0},
+        {"title": 0, "body": 1.0},  # weights must be positive
+        {"title": -1.0, "body": 1.0},
+        {"title": float("nan"), "body": 1.0},
+        {"title": float("inf"), "body": 1.0},
+        {"title": 1e39, "body": 1.0},  # overflows the server's f32 parse
+        {"title": 1e-300, "body": 1.0},  # underflows it to zero
+    ]
+    for bad in invalid:
+        with pytest.raises(ValueError):
+            index.create(field_weights=bad)
+
+
+def test_create_single_column_ddl_is_unchanged() -> None:
+    connection = _ScriptedConnection([])
+    index = _ScriptedIndex(connection)
+    index.create()
+    assert connection.log[1][0] == (
+        'CREATE INDEX IF NOT EXISTS "docs_body_stannum_idx"'
+        ' ON "docs" USING stannum ("body") WITH (tokenizer = \'jieba\')'
+    )
+    assert connection.closed
+
+
+def test_create_multi_column_ddl_quotes_names_and_escapes_the_reloption() -> None:
+    connection = _ScriptedConnection([])
+    index = _ScriptedIndex(connection)
+    index.create(field_weights={"We ird": 2.5, "it's": 1.0})
+    assert connection.log[0][0].startswith("CREATE EXTENSION IF NOT EXISTS")
+    assert connection.log[1][0] == (
+        'CREATE INDEX IF NOT EXISTS "docs_body_stannum_idx"'
+        ' ON "docs" USING stannum ("We ird", "it\'s")'
+        " WITH (tokenizer = 'jieba', field_weights = 'We ird:2.5,it''s:1.0')"
+    )
+
+
+def test_create_multi_column_index_is_idempotent(
+    stannum_server: pgembed.PostgresServer,
+) -> None:
+    pg = stannum_server
+    pg.psql("CREATE TABLE multi (id int PRIMARY KEY, title text, body text);")
+    index = StannumIndex(pg, "multi", "body")
+    index.create(field_weights={"title": 3.0, "body": 1.0})
+    index.create(field_weights={"title": 3.0, "body": 1.0})  # IF NOT EXISTS
+    assert scalar(
+        pg,
+        "SELECT i.indnkeyatts FROM pg_index i JOIN pg_class c ON c.oid ="
+        " i.indexrelid WHERE c.relname = 'multi_body_stannum_idx';",
+    ) == "2"
+    assert scalar(
+        pg,
+        "SELECT string_agg(a.attname, ',' ORDER BY a.attnum) FROM pg_index i"
+        " JOIN pg_attribute a ON a.attrelid = i.indexrelid WHERE"
+        " i.indexrelid = 'multi_body_stannum_idx'::regclass AND a.attnum > 0;",
+    ) == "title,body"
+    assert "field_weights=title:3.0,body:1.0" in scalar(
+        pg,
+        "SELECT array_to_string(reloptions, ',') FROM pg_class WHERE oid ="
+        " 'multi_body_stannum_idx'::regclass;",
+    )
+
+
+def test_field_weights_scale_scoring_end_to_end(
+    stannum_server: pgembed.PostgresServer,
+) -> None:
+    pg = stannum_server
+    pg.psql(FIELD_DOCS_SQL)
+    title_heavy = StannumIndex(pg, "field_docs", "title")
+    title_heavy.create(field_weights={"title": 10.0, "body": 1.0})
+    body_heavy = StannumIndex(pg, "field_docs", "body")
+    body_heavy.create(field_weights={"title": 1.0, "body": 10.0})
+    title_hits = title_heavy.search("needle", limit=5)
+    body_hits = body_heavy.search("needle", limit=5)
+    assert [hit.id for hit in title_hits] == [1, 2]
+    assert [hit.id for hit in body_hits] == [2, 1]
+    # The two indexes are transposes of each other: doc 1's title match
+    # under (10, 1) scores exactly like doc 2's body match under (1, 10).
+    assert title_hits[0].score == pytest.approx(body_hits[0].score, rel=1e-6)
+    # Each snippet renders the matching field's text, marks included.
+    assert "<mark>needle</mark>" in title_hits[0].snippet
+    assert "filler" not in title_hits[0].snippet
+    assert "<mark>needle</mark>" in body_hits[0].snippet
+    assert "filler" not in body_hits[0].snippet
+
+
+def test_field_scoped_queries_through_the_wrapper(
+    stannum_server: pgembed.PostgresServer,
+) -> None:
+    pg = stannum_server
+    pg.psql(FIELD_DOCS_SQL)
+    index = StannumIndex(pg, "field_docs", "title")
+    index.create(field_weights={"title": 3.0, "body": 1.0})
+    assert [hit.id for hit in index.search("title:(needle)")] == [1]
+    assert [hit.id for hit in index.search("body:(needle)")] == [2]
+    assert index.search_count("title:(needle)") == 1
+    import psycopg2
+
+    with pytest.raises(psycopg2.Error, match="unknown field"):
+        index.search("nope:(needle)")
+
+
+def test_field_syntax_on_single_column_index_is_an_error(
+    docs_index: StannumIndex,
+) -> None:
+    import psycopg2
+
+    with pytest.raises(psycopg2.Error, match="field syntax requires a multi-column"):
+        docs_index.search("body:(database)")
 
 
 # -- search / count ---------------------------------------------------------
