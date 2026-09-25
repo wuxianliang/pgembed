@@ -381,6 +381,13 @@ jobs:
           pytest -q --junitxml=test-reports/installed-wheel-smoke.xml tests/test_bundled_tools.py
       - name: PostgreSQL 18 native integration
         run: pytest -q --junitxml=test-reports/native-integration.xml -m integration tests/test_pgembed.py tests/test_tigerfs_pg18.py
+      - name: Dump PostgreSQL server logs on failure
+        if: failure()
+        run: |
+          find /tmp/pytest-of-runner -type f -name log 2>/dev/null | sort | while read -r server_log; do
+            echo "===== ${server_log} ====="
+            cat "${server_log}"
+          done
       - name: Archive runtime test reports
         if: always()
         uses: actions/upload-artifact@v4
