@@ -57,7 +57,11 @@ def test_standalone_discovery_when_metadata_marks_extension_not_built(
     """
     import pgembed
 
-    assert pgembed.BUNDLED_PG_MAJOR == 18  # premise: the attested major
+    # A source-only checkout (CI) has no built bundle, so BUNDLED_PG_MAJOR is
+    # None there; patch in the attested major this scenario is defined against.
+    # _standalone_extension_path() reads it from the pgembed namespace at call
+    # time, so the patch governs the attestation comparison below.
+    monkeypatch.setattr(pgembed, "BUNDLED_PG_MAJOR", 18)
 
     package_dir = tmp_path / "pgembed_stannum"
     package_dir.mkdir()
