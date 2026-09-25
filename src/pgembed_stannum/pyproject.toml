@@ -1,14 +1,15 @@
-# Standalone-wheel metadata placeholder (phase 2 of the pgembed_stannum
-# packaging plan). The phase-1 base wheel bundles this package into pgembed
-# via the root pyproject's `pgembed*` include glob; this file is not used
-# until the standalone pgembed-stannum wheel pipeline exists (staged
-# stannum.{so,dylib} + control + SQL under package-local
-# pginstall/share/postgresql/extension, per-OS/arch CI matrix, wheel
-# dependency audit).
+# Standalone companion wheel for the stannum extension (packaging phase 2).
+# The base pgembed wheel bundles this package through the root pyproject's
+# `pgembed*` include glob and takes stannum's native artifacts from the
+# shared bundled PostgreSQL prefix; this manifest is used by
+# tools/build_standalone_extension_wheel.py, which stages the extension
+# library at the package root and the control + SQL files under the
+# package-local pginstall tree before building.
 [project]
 name = "pgembed-stannum"
 version = "0.3.0rc2"
 description = "stannum BM25 full-text search extension for pgembed"
+readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "pgembed>=0.3.0rc2,<0.4",
@@ -22,6 +23,14 @@ test = ["pytest"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+pgembed_stannum = [
+    "*.dylib",
+    "*.so",
+    "*.dll",
+    "pginstall/share/postgresql/extension/*",
+]
 
 [build-system]
 requires = ["setuptools>=58.0.0", "wheel"]
