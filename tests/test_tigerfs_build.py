@@ -356,11 +356,14 @@ def test_release_matrix_is_darwin_arm64_and_linux_only() -> None:
 def test_macos_ci_uses_one_current_system_deployment_target() -> None:
     workflow = BUILD_WORKFLOW.read_text()
 
-    assert workflow.count("deployment-target: '26.0'") == 1
+    # Both macOS jobs (bundle wheels and the standalone extension wheel)
+    # share the one deployment target; the counts pin every site that
+    # spells it so a divergent or duplicated value cannot slip in.
+    assert workflow.count("deployment-target: '26.0'") == 2
     assert "minos 26.0. This does not claim compatibility with older macOS." in workflow
     assert workflow.count(
         "MACOSX_DEPLOYMENT_TARGET: ${{ matrix.deployment-target }}"
-    ) == 2
+    ) == 3
     assert workflow.count(
         "MACOSX_DEPLOYMENT_TARGET=${{ matrix.deployment-target }}"
     ) == 1

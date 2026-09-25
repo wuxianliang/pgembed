@@ -32,6 +32,7 @@ jobs:
             tests/test_pgdata_inspection.py \
             tests/test_commands.py \
             tests/test_standalone_extensions.py \
+            tests/test_standalone_extension_wheel.py \
             tests/test_tigerfs_build.py \
             tests/test_wheel_dependency_audit.py \
             tests/test_release_evidence.py
@@ -235,6 +236,105 @@ jobs:
             release-evidence/wheel-sha256s.txt
             release-evidence/source-locks.json
           name: pg18-bundle-attestation-${{ matrix.os }}-${{ matrix.arch }}
+          if-no-files-found: error
+          overwrite: true
+
+  build_standalone_wheels:
+    name: Build standalone extension wheels on ${{ matrix.os }}-${{ matrix.arch }}
+    needs: [static_tests, migration_boundary]
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            os: macos-latest
+            arch: arm64
+            deployment-target: '26.0' # minos 26.0; the wheel derives its tag from it
+          - runner: ubuntu-latest
+            os: ubuntu-latest
+            arch: x86_64
+            deployment-target: ''
+          - runner: ubuntu-24.04-arm
+            os: ubuntu-latest
+            arch: aarch64
+            deployment-target: ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Restore PostgreSQL 18 native cache (macOS only)
+        if: ${{ matrix.os != 'ubuntu-latest' && github.event_name != 'release' && !startsWith(github.ref, 'refs/tags/') }}
+        id: restore-postgres
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            pgbuild
+            src/pgembed/pginstall
+          key: ${{ env.PG_BUILD_CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Makefile', 'pgbuild/Makefile', 'tools/generate_bundle_metadata.py', 'tools/build_firebird_fdw_deps.sh', '.github/workflows/build-and-test.yml') }}
+      - name: Build stannum native prefix (macOS)
+        if: ${{ matrix.os != 'ubuntu-latest' && steps.restore-postgres.outputs.cache-hit != 'true' }}
+        shell: bash
+        env:
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.deployment-target }}
+        run: |
+          export PATH="$(pwd)/src/pgembed/pginstall/bin:$HOME/.cargo/bin:/opt/homebrew/opt/ccache/bin:$PATH"
+          brew install ccache jq openssl cmake ninja icu4c@78 curl bison
+          export IS_MUSL=0
+          rustup install "$RUST_TOOLCHAIN"
+          rustup default "$RUST_TOOLCHAIN"
+          cargo install cargo-pgrx --version "$CARGO_PGRX_VERSION" --locked
+          make EXTENSIONS=stannum build
+      - name: Build and audit the standalone wheel (macOS)
+        if: ${{ matrix.os != 'ubuntu-latest' }}
+        run: |
+          python tools/build_standalone_extension_wheel.py --extension stannum \
+            --install-prefix src/pgembed/pginstall \
+            --output-dir standalone-wheelhouse
+          python tools/audit_wheel_dependencies.py standalone-wheelhouse/*.whl
+      - name: Install cibuildwheel (Linux)
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade cibuildwheel
+      - name: Stage the standalone wheel project skeleton (Linux)
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: |
+          python tools/build_standalone_extension_wheel.py --extension stannum \
+            --stage-dir standalone-wheel-project --skeleton-only
+      - name: Build the standalone wheel in manylinux (Linux)
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        env:
+          CIBW_ARCHS: ${{ matrix.arch }}
+          CIBW_BUILD: cp312-* cp313-* cp314-*
+          CIBW_SKIP: '*-musllinux_*'
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+          CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
+          CIBW_BEFORE_ALL_LINUX: |
+            set -e
+            cd /project
+            if command -v yum &> /dev/null; then
+              yum install -y ccache jq gcc perl openssl-devel zlib-devel libxml2-devel llvm-devel clang-devel pkg-config cmake ninja-build libcurl-devel libicu-devel glib2-devel flex bison
+            elif command -v apt-get &> /dev/null; then
+              apt-get update
+              apt-get install -y ccache jq gcc perl libssl-dev zlib1g-dev libxml2-dev llvm-dev clang-dev pkg-config cmake ninja-build libcurl4-openssl-dev libicu-dev libglib2.0-dev flex bison
+            fi
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.96.0
+            export PATH="$HOME/.cargo/bin:/usr/lib/ccache:$PATH"
+            export IS_MUSL=0
+            rustup default 1.96.0
+            cargo install cargo-pgrx --version 0.17.0 --locked
+            make EXTENSIONS=stannum build
+            python3 tools/build_standalone_extension_wheel.py --extension stannum \
+              --install-prefix src/pgembed/pginstall \
+              --stage-dir standalone-wheel-project --stage-artifacts-only
+        run: python -m cibuildwheel standalone-wheel-project --output-dir standalone-wheelhouse
+      - name: Archive standalone wheel payloads
+        uses: actions/upload-artifact@v4
+        with:
+          path: standalone-wheelhouse/*.whl
+          name: standalone-extension-wheels-${{ matrix.os }}-${{ matrix.arch }}
           if-no-files-found: error
           overwrite: true
 
