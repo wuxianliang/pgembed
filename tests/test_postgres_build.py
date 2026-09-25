@@ -194,6 +194,24 @@ def test_pgmq_install_uses_two_pgxs_invocations() -> None:
     assert "--with-ssl=openssl" in makefile
 
 
+def test_pgvector_builds_without_native_cpu_tuning() -> None:
+    """pgvector's Makefile defaults to -march=native, which compiles vector.so
+    for the *build* host's CPU. The x86_64 wheel then dies with SIGILL on any
+    machine without those instructions (GitHub's runner fleet mixes CPU
+    generations, and so do end users), so both pgvector invocations must pass
+    pgvector's documented portability override: an empty OPTFLAGS.
+    """
+    makefile = MAKEFILE.read_text()
+    rule = next(
+        line
+        for line in makefile.splitlines()
+        if line.startswith("$(INSTALL_PREFIX)/lib/postgresql/vector.$(PG_DLSUFFIX):")
+    )
+    body = makefile.splitlines()[makefile.splitlines().index(rule) + 1]
+    assert body.count("OPTFLAGS=") == 2
+    assert body.count("$(MAKE) -C $(PGVECTOR_DIR)") == 2
+
+
 def test_all_git_sources_use_verification_markers() -> None:
     makefile = MAKEFILE.read_text()
     markers = (
