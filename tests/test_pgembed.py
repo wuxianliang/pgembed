@@ -28,7 +28,9 @@ def _check_sqlalchemy_works(srv : pgembed.PostgresServer):
     uri = srv.get_uri(database_name)
 
     if not database_exists(uri):
-        create_database(uri)
+        # template1 intermittently races the preloaded timescaledb background
+        # workers (ObjectInUse); template0 never takes incidental connections.
+        create_database(uri, template='template0')
 
     engine = sa.create_engine(uri)
     conn = engine.connect()

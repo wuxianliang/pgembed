@@ -12,7 +12,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
         uri = pg.get_uri(database_name)
 
         if not database_exists(uri):
-            create_database(uri)
+            create_database(uri, template='template0')
 
         engine = sa.create_engine(uri, isolation_level='AUTOCOMMIT')
         conn = engine.connect()
