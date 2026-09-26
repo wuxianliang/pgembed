@@ -21,7 +21,9 @@ dev = [
 test = [
     "pytest",
     "psycopg2-binary",
-    "sqlalchemy>=2",
+    # sqlalchemy-utils (0.42.1) imports ScalarAttributeImpl, renamed to
+    # _ScalarAttributeImpl in SQLAlchemy 2.1; cap until it catches up.
+    "sqlalchemy>=2,<2.1",
     "sqlalchemy-utils"
 ]
 
