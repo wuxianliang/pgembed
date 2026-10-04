@@ -24,7 +24,7 @@ def build_langchain_retriever(
         )
         from langchain_core.documents import Document
         from langchain_core.retrievers import BaseRetriever
-        from langchain_core.runnables.utils import run_in_executor
+        from langchain_core.runnables.config import run_in_executor
     except ImportError as exc:  # pragma: no cover - depends on extras
         raise ImportError(
             "StannumRetriever.for_langchain requires the langchain extra; "

@@ -19,7 +19,8 @@ def build_llama_index_retriever(
 ) -> Any:
     """Build a llama-index ``BaseRetriever`` over ``StannumIndex.search``."""
     try:
-        from llama_index.core.schema import BaseRetriever, NodeWithScore, TextNode
+        from llama_index.core.base.base_retriever import BaseRetriever
+        from llama_index.core.schema import NodeWithScore, TextNode
     except ImportError as exc:  # pragma: no cover - depends on extras
         raise ImportError(
             "StannumRetriever.for_llama_index requires the llama-index extra; "
@@ -30,6 +31,7 @@ def build_llama_index_retriever(
         return NodeWithScore(
             node=TextNode(
                 text=hit.snippet or "",
+                id_=str(hit.id),
                 metadata={"id": hit.id, "score": hit.score, "ctid": hit.ctid},
             ),
             score=float(hit.score),
@@ -44,7 +46,7 @@ def build_llama_index_retriever(
             )
             return [_hit_to_node_with_score(hit) for hit in hits]
 
-        async def aretrieve(self, query_bundle: Any) -> list:
+        async def _aretrieve(self, query_bundle: Any) -> list:
             return await asyncio.to_thread(self._retrieve, query_bundle)
 
     return _StannumLlamaRetriever()
