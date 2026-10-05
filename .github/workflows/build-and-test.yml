@@ -22,6 +22,11 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install --upgrade pip pytest psutil fasteners platformdirs
+      # A pin that names a commit only in a local clone fails minutes into a
+      # platform's bundle build with `upload-pack: not our ref`, after the checks
+      # that could have caught it in seconds. This runs first and costs nothing.
+      - name: Check every git pin is published
+        run: python3 tools/check_published_pins.py
       - name: Validate source, metadata, stamps, command wrappers, and release evidence
         run: |
           mkdir -p test-reports
