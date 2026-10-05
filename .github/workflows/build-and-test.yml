@@ -342,6 +342,89 @@ jobs:
           if-no-files-found: error
           overwrite: true
 
+  stannum_release_gate:
+    name: Stannum 0.5.0 release gate on ${{ matrix.os }}-${{ matrix.arch }}
+    needs: build_wheels
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            os: macos-latest
+            arch: arm64
+          - runner: ubuntu-latest
+            os: ubuntu-latest
+            arch: x86_64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-package-distributions-${{ matrix.os }}-${{ matrix.arch }}
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: pg18-bundle-attestation-${{ matrix.os }}-${{ matrix.arch }}
+          path: evidence
+      - name: Record the candidate wheel identity
+        run: |
+          mkdir -p test-reports
+          # Exactly one cp312 wheel per platform cell: picking a wheel by
+          # `head -n 1` without checking would let a second candidate ride along
+          # and be measured in place of the intended one.
+          wheels=$(find dist -name '*cp312*.whl')
+          test "$(printf '%s\n' "$wheels" | wc -l)" -eq 1 || { echo "$wheels"; exit 1; }
+          sha256sum $wheels | tee wheel-sha256s.txt
+          # The bundle attestation names the stannum source commit, the
+          # PostgreSQL commit and the bundle metadata the wheel was built from.
+          cat evidence/source-locks.json
+      - name: Install the candidate wheel into a clean venv
+        run: |
+          python -m venv .venv-gate
+          . .venv-gate/bin/activate
+          python -m pip install --upgrade pip
+          wheel=$(find dist -name '*cp312*.whl' | head -n 1)
+          test -n "$wheel" || { echo 'no cp312 candidate wheel in dist/'; exit 1; }
+          python -m pip install "$wheel" pytest psycopg2-binary
+          # Install the retriever extras so the langchain/llama-index smokes run
+          # instead of skipping; the two "extra is missing" cases then skip by
+          # design, and `-rs` reports every skip with its reason so the permitted
+          # skips are explicit rather than implied.
+          python -m pip install 'langchain-core>=0.3' 'llama-index-core>=0.11'
+          python -c "import pgembed, pgembed_stannum; print(pgembed.__file__)"
+      - name: Stannum 0.5.0 release gate against the installed wheel
+        # Discharged in a clean environment: the wheel is installed, nothing is
+        # editable, and no external prefix can substitute its bundle. The gate
+        # asserts the loaded pgembed is the installed one and that its bundle
+        # metadata names the commit pgbuild/Makefile pins, so a build that quietly
+        # fell back to a local prefix cannot pass.
+        #
+        # test_bundled_tools.py is included because it attests the shipped
+        # extension set; the TigerFS mount and the wider PostgreSQL 18 lifecycle
+        # suites run against the same wheel in runtime_integration.
+        run: |
+          . .venv-gate/bin/activate
+          pytest -q -rs --junitxml=test-reports/stannum-release-gate.xml \
+            tests/test_stannum_release_gate.py \
+            tests/test_pgembed_stannum.py \
+            tests/test_stannum_jieba.py \
+            tests/test_bundled_tools.py
+      - name: Archive release-gate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stannum-release-gate-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            wheel-sha256s.txt
+            evidence/source-locks.json
+            evidence/wheel-sha256s.txt
+            test-reports/*.xml
+          if-no-files-found: warn
+          overwrite: true
+
   runtime_integration:
     name: Runtime integration on ${{ matrix.os }}-${{ matrix.arch }}
     needs: build_wheels
@@ -429,7 +512,7 @@ jobs:
   publish-to-pypi:
     if: ${{ startsWith(github.ref, 'refs/tags/') }}
     name: Publish PostgreSQL 18 pre-release to PyPI
-    needs: [static_tests, migration_boundary, build_wheels, runtime_integration, tigerfs_mount_macos]
+    needs: [static_tests, migration_boundary, build_wheels, runtime_integration, stannum_release_gate, tigerfs_mount_macos]
     runs-on: ubuntu-latest
     environment:
       name: pypi

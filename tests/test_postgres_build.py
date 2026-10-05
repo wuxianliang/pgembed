@@ -14,6 +14,25 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 MAKEFILE = REPO_ROOT / "pgbuild" / "Makefile"
 
 
+def makefile_pin(name: str) -> str:
+    """A `NAME := value` pin read from pgbuild/Makefile.
+
+    Asserting against the Makefile rather than a copy of the value keeps the
+    stamp test honest when the pin moves: a literal here once disagreed with the
+    Makefile's own pin and the disagreement was only found by reading both.
+    """
+    for line in MAKEFILE.read_text(encoding="utf-8").splitlines():
+        stripped = line.split("#", 1)[0].rstrip()
+        if ":=" not in stripped or stripped.startswith("\t"):
+            continue
+        key, _, value = stripped.partition(":=")
+        if key.strip() == name:
+            pinned = value.strip()
+            assert pinned, f"{name} is pinned to an empty value"
+            return pinned
+    raise AssertionError(f"{name} is not pinned in {MAKEFILE}")
+
+
 class BundleStamp:
     def __init__(self, root: Path) -> None:
         self.root = root
@@ -176,7 +195,7 @@ def test_source_lock_and_toolchain_are_recorded(tmp_path: Path) -> None:
         "pg_typesafe_patch=patches/pg_typesafe-pg18-noreturn.patch:"
         "2c3635684b6906b570b5853d5b8f6dbe02869fe49b2a7683264e08c6364480b2" in text
     )
-    assert "stannum=3227d7afecd2b66e669c083266043c7cb6f9ada5" in text
+    assert f"stannum={makefile_pin('STANNUM_COMMIT')}" in text
     assert "stannum_pgrx=0.19.1" in text
     assert "contrib_install=v1" in text
     assert "recipe=pgembed-postgresql-18-bundle-v2" in text

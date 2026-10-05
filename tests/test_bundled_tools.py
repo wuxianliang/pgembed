@@ -17,6 +17,28 @@ from pgembed._bundle_metadata import require_bundle_metadata
 
 TIGERFS_VERSION = "0.7.0"
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+MAKEFILE = REPO_ROOT / "pgbuild" / "Makefile"
+
+
+def makefile_pin(name: str) -> str:
+    """A `NAME := value` source pin read from pgbuild/Makefile.
+
+    The installed bundle must attest the commit the Makefile actually pins, so
+    read the pin instead of copying it: a copied literal drifts silently and the
+    wheel would then be measured against a source it never built.
+    """
+    for line in MAKEFILE.read_text(encoding="utf-8").splitlines():
+        stripped = line.split("#", 1)[0].rstrip()
+        if ":=" not in stripped or stripped.startswith("\t"):
+            continue
+        key, _, value = stripped.partition(":=")
+        if key.strip() == name:
+            pinned = value.strip()
+            assert pinned, f"{name} is pinned to an empty value"
+            return pinned
+    raise AssertionError(f"{name} is not pinned in {MAKEFILE}")
+
 
 def tigerfs_path() -> Path:
     return Path(pgembed.POSTGRES_BIN_PATH) / "tigerfs"
@@ -162,7 +184,7 @@ def test_release_bundle_contains_complete_attested_extension_set() -> None:
     assert stannum.version == "0.5.0"
     assert stannum.has_library is True
     assert stannum.library is not None
-    assert stannum.source_commit == "3227d7afecd2b66e669c083266043c7cb6f9ada5"
+    assert stannum.source_commit == makefile_pin("STANNUM_COMMIT")
     stannum_library_path = bundle_root / stannum.library
     assert stannum_library_path.is_file(), f"stannum library is missing: {stannum_library_path}"
 

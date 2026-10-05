@@ -89,7 +89,10 @@ DEFAULT_SOURCE_LOCKS = {
     "pgtap": "pgtap=sha256:d2c951afb296a001d21785611a8e966e3f8fa3f5bfbd929396a5130c0152f314:v1.3.4",
     "pg_jsonschema": "pg_jsonschema=commit:d08e4dea14549858b54791d6da4f606dc58a512e",
     "pg_typesafe": "pg_typesafe=commit:93a5acbb43154aea757a96adb680fb3d45a00a9a",
-    "stannum": "stannum=commit:3227d7afecd2b66e669c083266043c7cb6f9ada5",
+    # Derived, not literal: a pin recorded here in duplicate once drifted from the
+    # Makefile's own (ad4d3b74 recorded while the Makefile said 3227d7af), which
+    # is the failure mode this dict exists to catch.
+    "stannum": f"stannum=commit:{_MAKEFILE_PINS['STANNUM_COMMIT']}",
     "tigerfs": "tigerfs=sha256:0000000000000000000000000000000000000000000000000000000000000000:v0.7.0",
 }
 FIREBIRD_SUBMODULE_LOCKS = ("libfq", "libtommath", "firebird-client")
@@ -620,8 +623,8 @@ def test_generator_records_stannum_lock_commit(tmp_path: Path) -> None:
     assert metadata is not None
     stannum = metadata.extensions["stannum"]
     assert stannum.version == "0.5.0"
-    assert stannum.source_commit == "3227d7afecd2b66e669c083266043c7cb6f9ada5"
-    assert stannum.source_ref == "3227d7afecd2b66e669c083266043c7cb6f9ada5"
+    assert stannum.source_commit == _MAKEFILE_PINS["STANNUM_COMMIT"]
+    assert stannum.source_ref == _MAKEFILE_PINS["STANNUM_COMMIT"]
     assert stannum.source_sha256 is None
 
 
