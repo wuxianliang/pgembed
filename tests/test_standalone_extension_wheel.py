@@ -98,6 +98,7 @@ def test_built_wheel_carries_the_staged_artifacts_and_helpers_find_them(
     with zipfile.ZipFile(wheel) as archive:
         names = set(archive.namelist())
         assert "pgembed_stannum/stannum.dylib" in names
+        assert not any("pg_textsearch" in name for name in names)
         assert (
             "pgembed_stannum/pginstall/share/postgresql/extension/stannum.control"
             in names
@@ -174,6 +175,7 @@ def test_real_bundle_wheel_matches_the_built_prefix(tmp_path: Path) -> None:
     with zipfile.ZipFile(wheel) as archive:
         names = set(archive.namelist())
         assert f"pgembed_stannum/{REAL_LIBRARY.name}" in names
+        assert not any("pg_textsearch" in name for name in names)
         assert (
             archive.read("pgembed_stannum/pginstall/share/postgresql/extension/stannum.control").decode()
             == prefix_control

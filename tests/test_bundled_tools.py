@@ -76,8 +76,14 @@ def test_release_bundle_contains_complete_attested_extension_set() -> None:
         "stannum",
     }
     assert set(metadata.extensions) == expected
+    assert "pg_textsearch" not in metadata.extensions
 
     bundle_root = Path(pgembed.POSTGRES_BIN_PATH).parent
+    leftovers = [
+        *sorted((bundle_root / "lib" / "postgresql").glob("pg_textsearch*")),
+        *sorted((bundle_root / "share" / "postgresql" / "extension").glob("pg_textsearch*")),
+    ]
+    assert leftovers == [], f"pg_textsearch artifacts in bundle prefix: {leftovers}"
     for name in sorted(expected):
         extension = metadata.extensions[name]
         assert extension.requested and extension.built and not extension.skipped
@@ -135,10 +141,17 @@ def test_release_bundle_contains_complete_attested_extension_set() -> None:
     assert typesafe.requires_preload is False
     assert typesafe.preload_name is None
     assert typesafe.create_name == "typesafe"
-    assert typesafe.version == "0.0.1"
     assert typesafe.has_library is True
     assert typesafe.library is not None
-    assert typesafe.source_commit == "93a5acbb43154aea757a96adb680fb3d45a00a9a"
+    if typesafe.source_ref == "local-overlay:typesafe":
+        assert typesafe.version == "0.1.0"
+        assert typesafe.source_commit is None
+        assert typesafe.source_sha256 == (
+            "9bfb234189f764fbd100b7d638f5f16d8096e4fb49e0cbecf44e2d7733718a73"
+        )
+    else:
+        assert typesafe.version == "0.0.1"
+        assert typesafe.source_commit == "93a5acbb43154aea757a96adb680fb3d45a00a9a"
     library_path = bundle_root / typesafe.library
     assert library_path.is_file(), f"typesafe library is missing: {library_path}"
 
@@ -146,10 +159,10 @@ def test_release_bundle_contains_complete_attested_extension_set() -> None:
     assert stannum.requires_preload is False
     assert stannum.preload_name is None
     assert stannum.create_name == "stannum"
-    assert stannum.version == "0.1.0"
+    assert stannum.version == "0.5.0"
     assert stannum.has_library is True
     assert stannum.library is not None
-    assert stannum.source_commit == "e163585cb9d6b6f78b8de067a9c4aa33ea238063"
+    assert stannum.source_commit == "3227d7afecd2b66e669c083266043c7cb6f9ada5"
     stannum_library_path = bundle_root / stannum.library
     assert stannum_library_path.is_file(), f"stannum library is missing: {stannum_library_path}"
 

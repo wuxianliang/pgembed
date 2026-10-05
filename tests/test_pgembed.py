@@ -528,6 +528,17 @@ SELECT typesafe_noul(
     assert "0.92" in noul
     reset = tmp_postgres.psql("RESET typesafe.mock_response;")
     assert "RESET" in reset
+    catalog = tmp_postgres.psql(
+        "SELECT extversion FROM pg_extension WHERE extname = 'typesafe';"
+    ).strip()
+    comment = tmp_postgres.psql(
+        "SELECT comment FROM pg_available_extensions WHERE name = 'typesafe';"
+    )
+    if "0.1.0" in catalog:
+        assert "0.2.0" in tmp_postgres.psql("SELECT jev_version();")
+        assert "native Jev" in comment
+    else:
+        assert "0.0.1" in catalog
 
 
 def test_stannum(tmp_postgres):

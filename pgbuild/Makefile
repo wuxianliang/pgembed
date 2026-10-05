@@ -111,6 +111,12 @@ PSQL_BM25S_LDFLAGS := $(if $(PSQL_BM25S_ICU_PREFIX),-L$(PSQL_BM25S_ICU_PREFIX)/l
 # delocate). ICU's own cross-references already use @loader_path.
 PSQL_BM25S_RELOCATE_ICU := $(if $(filter Darwin,$(HOST_OS))$(PSQL_BM25S_ICU_PREFIX),1,)
 
+# pg_textsearch is the stannum benchmark comparison target, not a bundled
+# extension. Do not add it to EXTENSIONS or `all`. To run
+# tools/bench_stannum_vs_pg_textsearch.py, provision an external PG18.4 build
+# into this server prefix (prefix-scoped install, not a .PHONY recipe).
+# See tests/test_stannum_vs_pg_textsearch.py.
+
 TIMESCALEDB_TAG := 2.27.1
 TIMESCALEDB_SHA256 := f0a940720bb5b0b635dae4d8aeceb13e83b196b8aab8717876af0f45efa47ab6
 TIMESCALEDB_URL := https://github.com/timescale/timescaledb/archive/refs/tags/$(TIMESCALEDB_TAG).tar.gz
@@ -819,7 +825,27 @@ bundle-metadata: postgres $(EXTENSIONS) relativize
 		--rust-toolchain "$(RUST_TOOLCHAIN)" \
 		--cargo-pgrx-version "$(CARGO_PGRX_VERSION)" \
 		--tigerfs-version "$(TIGERFS_TAG)" \
-		--tigerfs-sha256 "$(if $(filter tigerfs,$(FINAL_EXTENSIONS)),$(TIGERFS_EXPECTED_SHA256),)"
+		--tigerfs-sha256 "$(if $(filter tigerfs,$(FINAL_EXTENSIONS)),$(TIGERFS_EXPECTED_SHA256),)" \
+		--source-lock "pgvector=sha256:$(PGVECTOR_SHA256):$(PGVECTOR_TAG)" \
+		--source-lock "vectorchord=sha256:$(VECTORCHORD_SHA256):$(VECTORCHORD_TAG)" \
+		--source-lock "age=commit:$(AGE_COMMIT)" \
+		--source-lock "psql_bm25s=commit:$(PSQL_BM25S_COMMIT)" \
+		--source-lock "timescaledb=sha256:$(TIMESCALEDB_SHA256):$(TIMESCALEDB_TAG)" \
+		--source-lock "pg_cron=commit:$(PG_CRON_COMMIT):$(PG_CRON_TAG)" \
+		--source-lock "pg_net=commit:$(PG_NET_COMMIT):$(PG_NET_TAG)" \
+		--source-lock "pgsql_http=sha256:$(PGSQL_HTTP_SHA256):$(PGSQL_HTTP_TAG)" \
+		--source-lock "plsh=commit:$(PLSH_COMMIT)" \
+		--source-lock "firebird_fdw=sha256:$(FIREBIRD_FDW_SHA256):$(FIREBIRD_FDW_TAG)" \
+		--source-lock "libfq=sha256:$(LIBFQ_SHA256):$(LIBFQ_TAG)" \
+		--source-lock "libtommath=sha256:$(LIBTOMMATH_SHA256):$(LIBTOMMATH_TAG)" \
+		--source-lock "firebird-client=sha256:$(FIREBIRD_CLIENT_SHA256):$(FIREBIRD_CLIENT_VERSION)" \
+		--source-lock "pgmq=sha256:$(PGMQ_SHA256):$(PGMQ_TAG)" \
+		--source-lock "pg_partman=sha256:$(PG_PARTMAN_SHA256):$(PG_PARTMAN_TAG)" \
+		--source-lock "pgtap=sha256:$(PGTAP_SHA256):$(PGTAP_TAG)" \
+		--source-lock "pg_jsonschema=commit:$(PG_JSONSCHEMA_COMMIT)" \
+		--source-lock "pg_typesafe=commit:$(PG_TYPESAFE_COMMIT)" \
+		--source-lock "stannum=commit:$(STANNUM_COMMIT)" \
+		--source-lock "tigerfs=sha256:$(TIGERFS_EXPECTED_SHA256):$(TIGERFS_TAG)"
 	@mkdir -p "$$(dirname "$(BUNDLE_COMPLETION_MARKER)")"; tmp="$(BUNDLE_COMPLETION_MARKER).tmp.$$$$"; trap 'rm -f "$$tmp"' EXIT HUP INT TERM; printf '%s\n' 'schema=1' 'postgres=$(POSTGRES_VERSION)' 'metadata=build-metadata.json' > "$$tmp"; mv -f "$$tmp" "$(BUNDLE_COMPLETION_MARKER)"
 
 .PHONY: clean clean-all

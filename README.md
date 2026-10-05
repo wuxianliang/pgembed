@@ -40,7 +40,7 @@ Think of it like SQLite, but with the power of PostgreSQL. Just `pip install pge
 - **Firebird FDW**: Includes [firebird_fdw](https://github.com/ibarwick/firebird_fdw) so PostgreSQL can `SELECT`/`INSERT`/`UPDATE`/`DELETE` against a remote Firebird database
 - **Message queue**: Includes [pgmq](https://github.com/pgmq/pgmq) for a lightweight Postgres-native queue (SQS/RSMQ-style send/read/archive) and [pg_partman](https://github.com/pgpartman/pg_partman) for partitioned queues
 - **Validation & tests**: Includes [pg_jsonschema](https://github.com/supabase/pg_jsonschema) for JSON Schema checks on `json`/`jsonb`, and [pgTAP](https://pgtap.org/) for SQL-level TAP tests
-- **AI classification**: Includes [pg_typesafe](https://github.com/giuliosmall/pg_typesafe) to call TypeSafe AI (Jev) from SQL for categorical tasks — classify, detect, score, and ask (pre-alpha; requires libcurl; a one-line local patch adapts it to PG18)
+- **AI classification**: Includes [pg_typesafe](https://github.com/giuliosmall/pg_typesafe) **0.1.0** to call TypeSafe AI (Jev) from SQL. Keeps the `typesafe_*` text classifiers and adds native `jev_*` row predicates (pg-jev **0.2.0** API: `WHERE jev(tbl, '…')`, `jev_choice`, `jev_score`, …). Requires libcurl.
 - **Indexed search engine**: Includes [stannum](https://github.com/wuxianliang/stannum) (our fork of TeamSpringbird/stannum, a fork of PlanetScale Lead; carries the `jieba` word-level Chinese tokenizer) for BM25 search with Boolean/phrase/proximity TINQL queries, highlighting, and `stannum` access-method indexes (Rust/pgrx; development software)
 - **PostgreSQL contrib**: `pg_stat_statements`, `pg_trgm`, `unaccent`, `pgcrypto`, `ltree`, `hstore`, and `postgres_fdw` are installed with the server so `CREATE EXTENSION` works without extra packages
 
@@ -169,7 +169,7 @@ pgembed bundles a curated set of PostgreSQL extensions, built specifically for P
 | [pg_partman](https://github.com/pgpartman/pg_partman) | `pg_partman` | `pg_partman` | — | SQL-only partition manager (background worker not bundled; use `pg_cron` for maintenance) |
 | [pgTAP](https://pgtap.org/) | `pgtap` | `pgtap` | — | SQL-only TAP test framework |
 | [pg_jsonschema](https://github.com/supabase/pg_jsonschema) | `pg_jsonschema` | `pg_jsonschema` | — | JSON Schema validation (Rust/pgrx) |
-| [pg_typesafe](https://github.com/giuliosmall/pg_typesafe) | `typesafe` | `pg_typesafe` | — | TypeSafe AI (Jev) categorical classification from SQL; works with a TypeSafe key or via OpenRouter's Decisions API (requires libcurl; pre-alpha, PG18-patched) |
+| [pg_typesafe](https://github.com/giuliosmall/pg_typesafe) | `typesafe` | `pg_typesafe` | — | **0.1.0**: `typesafe_*` classifiers plus native `jev_*` row predicates (pg-jev 0.2.0). TypeSafe key or OpenRouter Decisions API. `\dx` comment: *TypeSafe AI client and native Jev row predicates*. Requires libcurl. |
 | [stannum](https://github.com/wuxianliang/stannum) | `stannum` | `stannum` | — | BM25 search engine with TINQL Boolean/phrase queries, highlighting, and exact counts under concurrent writes (Rust/pgrx; development software; our fork of TeamSpringbird/stannum with the `jieba` tokenizer) |
 
 `pgembed-pgvector` is also published as a standalone wheel; the rest are bundled into the base `pgembed` wheel.
@@ -309,7 +309,18 @@ server.psql("SELECT pgtap_version();")
 
 ### Using pg_typesafe
 
-`pg_typesafe` calls the [TypeSafe AI](https://typesafe.ai) (Jev) API from SQL for categorical tasks: `typesafe_classify` (choice), `typesafe_detect`/`typesafe_noul` (binary + intensity), `typesafe_score` (0–100 score), and `typesafe_ask` (free-form label). The API key comes from the `typesafe.api_key` GUC or the `TYPESAFE_API_KEY` environment variable of the server process; other GUCs: `typesafe.endpoint`, `typesafe.model`, `typesafe.timeout_ms`, `typesafe.batch_size`, `typesafe.http_concurrency`. Without a key you can still exercise the SQL surface offline via the mock GUC:
+This tree's bundled prefix (`src/pgembed/pginstall`) installs **pg_typesafe 0.1.0** from the local sibling checkout (`source_ref=local-overlay:typesafe`). `CREATE EXTENSION typesafe` exposes two families:
+
+| Family | Surface | Typical use |
+|---|---|---|
+| `typesafe_*` | text in, record/scalar out | classify / detect / score / ask one string or a batch |
+| `jev_*` | row in (`anyelement`), native C | `WHERE jev(tbl, 'the country is Germany')`, `jev_choice`, `jev_score` |
+
+`pg_extension.extversion` is `0.1.0`. `jev_version()` is `0.2.0` (Jev API compatibility, not the extension catalog version). `EXECUTE` is revoked from `PUBLIC` on both families.
+
+`typesafe_*` reads `typesafe.api_key` / `typesafe.api_key_file` or the postmaster's `TYPESAFE_API_KEY`. Native `jev_*` live calls resolve `jev.api_key` (non-empty) then `TYPESAFE_API_KEY`; they do **not** read `typesafe.api_key`. Other useful GUCs: `typesafe.endpoint`, `typesafe.model`, `typesafe.timeout_ms`, `typesafe.batch_size`, `typesafe.http_concurrency`; `jev.api_url`, `jev.model`, `jev.threshold`, `jev.batch_size`, `jev.concurrency`. `jev.api_key` / `jev.api_url` are superuser-set.
+
+Without a key, `typesafe.mock_response` (superuser-only) short-circuits the **`typesafe_*` HTTP path**. Native `jev_*` offline tests need the loopback mock in the `pg_typesafe` repo (`test/jev/mock_api.py`), not this GUC.
 
 ```python
 import os
@@ -318,7 +329,9 @@ os.environ.setdefault("TYPESAFE_API_KEY", "...")  # inherited by the server proc
 
 with pgembed.get_server("/path/to/my/data/dir") as server:
     server.create_extension("pg_typesafe")
-    # Real calls need the API key above; mock mode needs no key and no network:
+    print(server.psql("SELECT extversion FROM pg_extension WHERE extname = 'typesafe';"))
+    print(server.psql("SELECT jev_version();"))
+    # Real typesafe_* calls need the API key above; mock mode needs no key and no network:
     server.psql("""
 SET typesafe.mock_response = $${
   "model": "jev-latest",
@@ -336,11 +349,23 @@ SELECT * FROM typesafe_classify(
 """)
 ```
 
-See the [upstream pg_typesafe README](https://github.com/giuliosmall/pg_typesafe) for the full function set (including `_many` batch variants and `typesafe_last_request()`). The project is pre-alpha; it is pinned to commit `93a5acb` with `pgbuild/patches/pg_typesafe-pg18-noreturn.patch` adapting it to PostgreSQL 18.
+Native predicates (live key or Jev mock server — not `typesafe.mock_response`):
+
+```sql
+SET jev.api_key = 'tsk_...';          -- superuser
+SET jev.api_url = 'https://api.typesafe.ai/v1/systemone';
+SELECT name FROM cities WHERE jev(cities, 'the country is Germany');
+SELECT name, jev_prob(cities, 'the country is Germany') AS p FROM cities;
+SELECT jev_choice(cities, 'which continent?', ARRAY['europe','asia','americas']) FROM cities;
+```
+
+A runnable mock walkthrough is `examples/typesafe_jev.py`. See the [pg_typesafe README](https://github.com/giuliosmall/pg_typesafe) (and this workspace's local `pg_typesafe` tree) for `_many` batch variants, `typesafe_last_request()`, `jev_eval` / `jev_stats`, and resource GUCs. Existing databases on **0.0.1** can `ALTER EXTENSION typesafe UPDATE;` to 0.1.0.
+
+The wheel *recipe* in `pgbuild/Makefile` still pins upstream commit `93a5acb` (catalog `0.0.1`) plus `pgbuild/patches/pg_typesafe-pg18-noreturn.patch` for a clean rebuild. A local `make pg_typesafe` follows that pin and would replace this overlay. Refresh the 0.1.0 prefix with `pg_typesafe/scripts/install-into-pgembed.sh` (do not change the bundle stamp).
 
 #### Using OpenRouter instead of a TypeSafe account
 
-OpenRouter hosts Jev as [`~typesafe/jev-latest`](https://openrouter.ai/~typesafe/jev-latest) (an alias over versioned ids like `typesafe/jev-1.13-20260917`) and serves the same System One wire schema through its **Decisions API (alpha)** — the extension works against it unchanged. Point the GUCs at OpenRouter and put your OpenRouter key (`sk-or-v1-...`) in `TYPESAFE_API_KEY`:
+OpenRouter hosts Jev as [`~typesafe/jev-latest`](https://openrouter.ai/~typesafe/jev-latest) (an alias over versioned ids like `typesafe/jev-1.13-20260917`) and serves the same System One wire schema through its **Decisions API (alpha)** — the `typesafe_*` HTTP client works against it unchanged. Point the GUCs at OpenRouter and put your OpenRouter key (`sk-or-v1-...`) in `TYPESAFE_API_KEY`:
 
 ```python
 import os
@@ -468,8 +493,10 @@ make pgtap
 # Build only pg_jsonschema (Rust/pgrx)
 make pg_jsonschema
 
-# Build only pg_typesafe (needs libcurl)
+# Build the Makefile-pinned upstream 0.0.1 (needs libcurl; overwrites a local 0.1.0 overlay)
 make pg_typesafe
+# Install the local sibling 0.1.0 + native jev into src/pgembed/pginstall instead:
+#   bash ../pg_typesafe/scripts/install-into-pgembed.sh
 
 # Build only stannum (Rust/pgrx search engine)
 make stannum
