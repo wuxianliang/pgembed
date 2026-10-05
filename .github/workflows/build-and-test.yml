@@ -378,9 +378,45 @@ jobs:
           wheels=$(find dist -name '*cp312*.whl')
           test "$(printf '%s\n' "$wheels" | wc -l)" -eq 1 || { echo "$wheels"; exit 1; }
           sha256sum $wheels | tee wheel-sha256s.txt
-          # The bundle attestation names the stannum source commit, the
-          # PostgreSQL commit and the bundle metadata the wheel was built from.
-          cat evidence/source-locks.json
+          # The bundle attestation keeps wheelhouse/ and release-evidence/ as
+          # separate directories, and downloading an artifact preserves the paths
+          # as they were relative to their common root. Find the manifests
+          # instead of guessing a subpath: the first dispatch of this job failed
+          # on exactly that guess, before any test had run.
+          lock=$(find evidence -name source-locks.json | head -n 1)
+          test -n "$lock" || { echo 'source-locks.json is missing from the attestation'; exit 1; }
+          manifest=$(find evidence -name wheel-sha256s.txt | head -n 1)
+          test -n "$manifest" && cat "$manifest"
+          echo "attestation: $lock"
+          # Prove the wheel being measured is the candidate the Makefile pins,
+          # rather than merely printing the identity for a reader to compare.
+          python - <<'PY'
+          import json
+          import pathlib
+          import re
+          import sys
+
+          lock = next(pathlib.Path("evidence").rglob("source-locks.json"))
+          data = json.loads(lock.read_text(encoding="utf-8"))
+          stannum = data["extensions"]["stannum"]
+          makefile = pathlib.Path("pgbuild/Makefile").read_text(encoding="utf-8")
+          match = re.search(r"^STANNUM_COMMIT\s*:=\s*(\S+)", makefile, re.M)
+          if match is None:
+              sys.exit("STANNUM_COMMIT is not pinned in pgbuild/Makefile")
+          pin = match.group(1)
+          if stannum["source_commit"] != pin:
+              sys.exit(
+                  f"candidate mismatch: wheel built from {stannum['source_commit']}, "
+                  f"Makefile pins {pin}"
+              )
+          if stannum["version"] != "0.5.0":
+              sys.exit(f"candidate is stannum {stannum['version']!r}, expected 0.5.0")
+          print(
+              f"candidate: stannum {stannum['version']} @ {stannum['source_commit']} "
+              f"(Makefile pin {pin}); postgres {data['postgres']['version']} "
+              f"@ {data['postgres']['source_ref']}"
+          )
+          PY
       - name: Install the candidate wheel into a clean venv
         run: |
           python -m venv .venv-gate
@@ -419,8 +455,7 @@ jobs:
           name: stannum-release-gate-${{ matrix.os }}-${{ matrix.arch }}
           path: |
             wheel-sha256s.txt
-            evidence/source-locks.json
-            evidence/wheel-sha256s.txt
+            evidence/**
             test-reports/*.xml
           if-no-files-found: warn
           overwrite: true
