@@ -301,7 +301,7 @@ TIGERFS_SELECTED := $(filter tigerfs,$(EXTENSIONS) $(MAKECMDGOALS))
 # line rather than three. Both came from literals that went stale — 0.5.0 was
 # still expected after 0.5.1 shipped, twice in the tests and once in the gate
 # job's own check.
-STANNUM_COMMIT := 3d9e96bd90faa3a22d7bb0c6585c170df3f2e2e570
+STANNUM_COMMIT := 3d9e96bd90faa3a22d7bb0c6585c170df3f2e570
 STANNUM_VERSION := 0.5.1
 STANNUM_REPO := https://github.com/wuxianliang/stannum.git
 STANNUM_DIR := stannum-$(STANNUM_COMMIT)

@@ -51,14 +51,32 @@ def makefile_variables() -> dict[str, str]:
     return pins
 
 
+class MalformedPin(Exception):
+    """A pin that names a commit but is not a commit anyone can fetch."""
+
+
 def git_pins(variables: dict[str, str]) -> list[tuple[str, str, str]]:
-    """(component, repository, commit) for every component pinned by commit."""
+    """(component, repository, commit) for every component pinned by commit.
+
+    A `<NAME>_COMMIT` that is present but is not a 40-character git object name
+    is an error, not an absence: it is a pin that was mistyped, and skipping it
+    silently is how a 42-character value reaches a build's fetch. This checker
+    once did exactly that — the value failed the pattern, so it was treated as
+    "not a git pin" and nine green pins were printed while the broken one went
+    unmentioned.
+    """
     pins = []
     for name in sorted({key[: -len("_REPO")] for key in variables if key.endswith("_REPO")}):
         commit = variables.get(f"{name}_COMMIT")
         repo = variables[f"{name}_REPO"]
-        if commit and re.fullmatch(r"[0-9a-f]{40}", commit):
-            pins.append((name, repo, commit))
+        if commit is None:
+            continue
+        if not re.fullmatch(r"[0-9a-f]{40}", commit):
+            raise MalformedPin(
+                f"{name}_COMMIT is {commit!r}, which is not a 40-character git SHA "
+                f"({len(commit)} characters); pin a real object name"
+            )
+        pins.append((name, repo, commit))
     return pins
 
 
@@ -93,7 +111,11 @@ def main() -> int:
     parser.parse_args()
 
     variables = makefile_variables()
-    checks: list[tuple[str, str, str]] = git_pins(variables)
+    try:
+        checks = git_pins(variables)
+    except MalformedPin as error:
+        print(str(error))
+        return 1
     checks.append(
         (
             "POSTGRES",
