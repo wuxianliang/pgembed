@@ -88,7 +88,7 @@ DEFAULT_SOURCE_LOCKS = {
     "pg_partman": "pg_partman=sha256:a3f100ae871677f0012579f58542c174900297f664a4ad2be0256e7ee5e33502:v5.5.0",
     "pgtap": "pgtap=sha256:d2c951afb296a001d21785611a8e966e3f8fa3f5bfbd929396a5130c0152f314:v1.3.4",
     "pg_jsonschema": "pg_jsonschema=commit:d08e4dea14549858b54791d6da4f606dc58a512e",
-    "pg_typesafe": "pg_typesafe=commit:93a5acbb43154aea757a96adb680fb3d45a00a9a",
+    "pg_typesafe": f"pg_typesafe=commit:{_MAKEFILE_PINS['PG_TYPESAFE_COMMIT']}",
     # Derived, not literal: a pin recorded here in duplicate once drifted from the
     # Makefile's own (ad4d3b74 recorded while the Makefile said 3227d7af), which
     # is the failure mode this dict exists to catch.

@@ -172,20 +172,22 @@ PGSQL_HTTP_DIR := pgsql-http-$(PGSQL_HTTP_TAG)
 # /usr/bin/curl-config and links the system libcurl.
 PGSQL_HTTP_CURL_CONFIG ?= $(shell command -v curl-config 2>/dev/null || echo curl-config)
 
-# Pinned to upstream master (no tags exist; the repo is pre-alpha): the tip
-# fixes shareability of the extension (dfb1a52) and the Ubuntu CI build
-# (93a5acb). It targets PG16/17 only, so patches/pg_typesafe-pg18-noreturn.patch
-# adapts the removed pg_attribute_noreturn() macro — drop the patch when
-# upstream supports PG18. The Makefile resolves libcurl via pkg-config; point
-# PKG_CONFIG_PATH at the private curl prefix when one is configured so every
-# curl consumer links the same provider (empty: toolchain defaults, which on
-# macOS falls back to -lcurl and links the SDK/system libcurl).
-PG_TYPESAFE_COMMIT := 93a5acbb43154aea757a96adb680fb3d45a00a9a
-PG_TYPESAFE_REPO := https://github.com/giuliosmall/pg_typesafe.git
+# Pinned to our fork, which 0.1.0 (native jev_* predicates) published
+# from: the upstream repo stopped at 93a5acb, a PG16/17-only 0.0.1 that needed
+# patches/pg_typesafe-pg18-noreturn.patch to build at all. 0.1.0 declares the
+# noreturn specifier PostgreSQL 18 wants, so the patch is gone — it was dropped
+# after building 0.1.0 against PostgreSQL 18.4 with no changes. The Makefile
+# resolves libcurl via pkg-config; point PKG_CONFIG_PATH at the private curl
+# prefix when one is configured so every curl consumer links the same provider
+# (empty: toolchain defaults, which on macOS falls back to -lcurl and links the
+# SDK/system libcurl).
+#
+# The pin is the fork's main, not the local checkout's tip: their trees are
+# identical, but only the pushed commit can be fetched by SHA.
+PG_TYPESAFE_COMMIT := 11d9358b7f82e3af026e8f706177fa3fda1e6bb5
+PG_TYPESAFE_REPO := https://github.com/wuxianliang/pg_typesafe.git
 PG_TYPESAFE_DIR := pg_typesafe-$(PG_TYPESAFE_COMMIT)
 PG_TYPESAFE_SOURCE_VERIFIED := $(PG_TYPESAFE_DIR)/.pgembed-source-verified
-PG_TYPESAFE_PATCH := patches/pg_typesafe-pg18-noreturn.patch
-PG_TYPESAFE_PATCH_SHA256 := 2c3635684b6906b570b5853d5b8f6dbe02869fe49b2a7683264e08c6364480b2
 PG_TYPESAFE_PKG_CONFIG_PATH := $(if $(PG_NET_CURL_PREFIX),$(PG_NET_CURL_PREFIX)/lib/pkgconfig,)
 
 # Pinned to upstream master (not the 1.20220917 tag): commits after the tag fix a
@@ -357,7 +359,6 @@ $(POSTGRES_BUNDLE_CONFIG_STAMP): FORCE
 		'pg_jsonschema=$(PG_JSONSCHEMA_COMMIT)' \
 		'pg_jsonschema_pgrx=$(PG_JSONSCHEMA_PGRX_VERSION)' \
 		'pg_typesafe=$(PG_TYPESAFE_COMMIT)' \
-		'pg_typesafe_patch=$(PG_TYPESAFE_PATCH):$(PG_TYPESAFE_PATCH_SHA256)' \
 		'stannum=$(STANNUM_COMMIT)' \
 		'stannum_pgrx=$(STANNUM_PGRX_VERSION)' \
 		'contrib_install=v1' \
@@ -731,7 +732,7 @@ else
 	$(error pg_jsonschema is unsupported on musl)
 endif
 
-$(PG_TYPESAFE_SOURCE_VERIFIED): $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PG_TYPESAFE_PATCH)
+$(PG_TYPESAFE_SOURCE_VERIFIED): $(POSTGRES_BUNDLE_CONFIG_STAMP)
 	@set -eu; \
 	rm -rf "$(PG_TYPESAFE_DIR)"; \
 	git init "$(PG_TYPESAFE_DIR)"; \
@@ -740,10 +741,7 @@ $(PG_TYPESAFE_SOURCE_VERIFIED): $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PG_TYPESAFE_PA
 	git -C "$(PG_TYPESAFE_DIR)" checkout --detach FETCH_HEAD; \
 	test "$$(git -C "$(PG_TYPESAFE_DIR)" rev-parse HEAD)" = "$(PG_TYPESAFE_COMMIT)"; \
 	test -f "$(PG_TYPESAFE_DIR)/Makefile"; \
-	printf '%s  %s\n' '$(PG_TYPESAFE_PATCH_SHA256)' '$(PG_TYPESAFE_PATCH)' | $(SHA256_CMD) -c -; \
-	git -C "$(PG_TYPESAFE_DIR)" apply "$(abspath $(PG_TYPESAFE_PATCH))"; \
 	touch "$@"
-
 # libcurl comes from the extension Makefile's own pkg-config lookup; the
 # recipe only steers it at the private curl when PG_NET_CURL_PREFIX is set
 # (see PG_TYPESAFE_PKG_CONFIG_PATH). On Linux the bundled libcurl.so.4 must

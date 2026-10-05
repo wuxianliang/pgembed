@@ -172,7 +172,10 @@ def test_release_bundle_contains_complete_attested_extension_set() -> None:
             "9bfb234189f764fbd100b7d638f5f16d8096e4fb49e0cbecf44e2d7733718a73"
         )
     else:
-        assert typesafe.version == "0.0.1"
+        # CI builds the pin, which is the fork's 0.1.0 release commit. 0.0.1
+        # was the old upstream pin; seeing it again means the pin moved back.
+        assert typesafe.version == "0.1.0"
+        assert typesafe.source_commit == makefile_pin("PG_TYPESAFE_COMMIT")
         assert typesafe.source_commit == "93a5acbb43154aea757a96adb680fb3d45a00a9a"
     library_path = bundle_root / typesafe.library
     assert library_path.is_file(), f"typesafe library is missing: {library_path}"
