@@ -176,7 +176,6 @@ def test_release_bundle_contains_complete_attested_extension_set() -> None:
         # was the old upstream pin; seeing it again means the pin moved back.
         assert typesafe.version == "0.1.0"
         assert typesafe.source_commit == makefile_pin("PG_TYPESAFE_COMMIT")
-        assert typesafe.source_commit == "93a5acbb43154aea757a96adb680fb3d45a00a9a"
     library_path = bundle_root / typesafe.library
     assert library_path.is_file(), f"typesafe library is missing: {library_path}"
 

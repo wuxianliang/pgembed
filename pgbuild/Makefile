@@ -286,13 +286,13 @@ TIGERFS_SELECTED := $(filter tigerfs,$(EXTENSIONS) $(MAKECMDGOALS))
 #
 # This pin is the identity of the stannum release build this bundle ships, so
 # it must name the candidate being measured, never a nearby tree. It is the
-# `v0.5.0` tag's commit, `272c38c`, which carries the E.2 rebuild-guarantee
-# suite that the E.3 pin (`3227d7af`) predates, and the corrected 0.4.0 to
-# 0.5.0 upgrade note. Its Rust sources are byte-identical to the E.4 pin
-# `7465464`, so the shipped library does not change; what changes is that the
-# provenance and the shipped upgrade SQL now match the release tree instead of
-# the commit one step before it.
-STANNUM_COMMIT := 272c38c155c4b579c4e2c80024f764e77f20f89e
+# post-0.5.0 fix commit, chosen over the `v0.5.0` tag on purpose: that fix makes
+# the planner hook tolerate a database with no stannum access method yet — the
+# state an extension script leaves between creating the amhandler function and
+# creating the method. Without it, loading the library makes planning any query
+# in that backend fail, which is what stopped the pg-agent v13 baseline. The
+# next stannum release folds this in, and the pin returns to a tag.
+STANNUM_COMMIT := 0c3bb2550995999feac1358ebc2d0ebbb99a2edc
 STANNUM_REPO := https://github.com/wuxianliang/stannum.git
 STANNUM_DIR := stannum-$(STANNUM_COMMIT)
 STANNUM_SOURCE_VERIFIED := $(STANNUM_DIR)/.pgembed-source-verified
