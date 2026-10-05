@@ -140,7 +140,11 @@ def test_bundle_metadata_names_the_pinned_candidate() -> None:
     stannum = metadata.extensions["stannum"]
     assert stannum.built is True
     assert stannum.skipped is False
-    assert stannum.version == "0.5.0"
+    expected = makefile_pin("STANNUM_VERSION")
+    assert stannum.version == expected, (
+        f"stannum ships {stannum.version}, the Makefile declares {expected}: "
+        "update STANNUM_VERSION when the pinned repository ships a release"
+    )
     assert stannum.create_name == "stannum"
     assert stannum.has_library is True
     assert stannum.built_for_postgres_major == metadata.postgres_major == 18
@@ -167,9 +171,11 @@ def test_live_server_exposes_the_050_release_surface(
     pg = release_server
 
     assert scalar(pg, "SELECT current_setting('server_version_num')::int / 10000") == "18"
-    assert (
-        scalar(pg, "SELECT extversion FROM pg_extension WHERE extname = 'stannum';")
-        == "0.5.0"
+    expected = makefile_pin("STANNUM_VERSION")
+    extversion = scalar(pg, "SELECT extversion FROM pg_extension WHERE extname = 'stannum';")
+    assert extversion == expected, (
+        f"installed extversion is {extversion}, the Makefile declares {expected}: "
+        "update STANNUM_VERSION when the pinned repository ships a release"
     )
     assert (
         scalar(
