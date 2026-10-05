@@ -283,13 +283,14 @@ TIGERFS_SELECTED := $(filter tigerfs,$(EXTENSIONS) $(MAKECMDGOALS))
 # collide with VectorChord's 0.17.0 or pg_jsonschema's 0.19.2 CLIs.
 #
 # This pin is the identity of the stannum release build this bundle ships, so
-# it must name the candidate being measured, never a nearby tree: the STN4
-# 0.5.0 head is `7465464`, which carries the E.2 rebuild-guarantee suite
-# (`postgres/tests/rebuild_guarantees.py`) that the earlier E.3 pin
-# (`3227d7af`) predates. The extension's Rust sources are byte-identical
-# between the two, so the shipped library does not change; the provenance
-# recorded in build-metadata.json does.
-STANNUM_COMMIT := 7465464aeb74cfc57afdfd8507f1878c31cbd0e6
+# it must name the candidate being measured, never a nearby tree. It is the
+# `v0.5.0` tag's commit, `272c38c`, which carries the E.2 rebuild-guarantee
+# suite that the E.3 pin (`3227d7af`) predates, and the corrected 0.4.0 to
+# 0.5.0 upgrade note. Its Rust sources are byte-identical to the E.4 pin
+# `7465464`, so the shipped library does not change; what changes is that the
+# provenance and the shipped upgrade SQL now match the release tree instead of
+# the commit one step before it.
+STANNUM_COMMIT := 272c38c155c4b579c4e2c80024f764e77f20f89e
 STANNUM_REPO := https://github.com/wuxianliang/stannum.git
 STANNUM_DIR := stannum-$(STANNUM_COMMIT)
 STANNUM_SOURCE_VERIFIED := $(STANNUM_DIR)/.pgembed-source-verified
