@@ -549,6 +549,16 @@ jobs:
       # Linux mount coverage belongs on a dedicated runner exposing /dev/fuse;
       # ordinary hosted/manylinux containers intentionally run only binary smoke.
 
+  # Publishing is deliberately not performed, and this job is why a tag is
+  # enough on its own. The package name in pyproject.toml is `pgembed`, which on
+  # PyPI belongs to the upstream project (latest 0.2.0, Oscar Moll and Arun
+  # Sharma); this fork has no `pypi` environment and no trusted-publisher entry
+  # for that project, so a tag push would run the whole pipeline and then fail
+  # at the upload. The wheels and their attestations are the distribution: the
+  # `python-package-distributions-*` and `pg18-bundle-attestation-*` artifacts
+  # carry the same content, with the source locks that name what was built.
+  # Reinstating publishing needs either maintainership of the PyPI project or a
+  # different package name, and both are decisions, not configuration.
   publish-to-pypi:
     if: ${{ startsWith(github.ref, 'refs/tags/') }}
     name: Publish PostgreSQL 18 pre-release to PyPI
