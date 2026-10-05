@@ -11,11 +11,35 @@ jieba, character adjacency under the default.
 from __future__ import annotations
 
 import tempfile
+from pathlib import Path
 from typing import Iterator
 
 import pytest
 
 import pgembed
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+MAKEFILE = REPO_ROOT / "pgbuild" / "Makefile"
+
+
+def makefile_pin(name: str) -> str:
+    """A ``NAME := value`` source pin read from ``pgbuild/Makefile``.
+
+    The installed extension version is the one that pin ships. Read it instead
+    of copying it: a copied literal drifts, and the failure then names the
+    Makefile line to update.
+    """
+    for line in MAKEFILE.read_text(encoding="utf-8").splitlines():
+        stripped = line.split("#", 1)[0].rstrip()
+        if ":=" not in stripped or stripped.startswith("\t"):
+            continue
+        key, _, value = stripped.partition(":=")
+        if key.strip() == name:
+            pinned = value.strip()
+            assert pinned, f"{name} is pinned to an empty value in {MAKEFILE}"
+            return pinned
+    raise AssertionError(f"{name} is not pinned in {MAKEFILE}")
+
 
 DOCS_SQL = """
 CREATE TABLE docs (id int PRIMARY KEY, body_jieba text, body_default text);
@@ -129,7 +153,12 @@ def test_dictionary_drift_reindex_and_presets(
     stannum_server: pgembed.PostgresServer,
 ) -> None:
     pg = stannum_server
-    assert scalar(pg, "SELECT extversion FROM pg_extension WHERE extname='stannum';") == "0.5.0"
+    expected = makefile_pin("STANNUM_VERSION")
+    extversion = scalar(pg, "SELECT extversion FROM pg_extension WHERE extname='stannum';")
+    assert extversion == expected, (
+        f"installed extversion is {extversion}, the Makefile declares {expected}: "
+        "update STANNUM_VERSION when the pinned repository ships a release"
+    )
     assert scalar(pg, "SELECT matches FROM stannum.index_analysis('docs_jieba');") == "t"
     before = scalar(pg, "SELECT stannum.jieba_dict_version();")
     pg.psql("SELECT stannum.jieba_add_word('星河数据库协议', 1000000, 'n');")
