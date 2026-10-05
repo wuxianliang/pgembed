@@ -275,7 +275,7 @@ TIGERFS_SELECTED := $(filter tigerfs,$(EXTENSIONS) $(MAKECMDGOALS))
 # extension crate lives in the postgres/ workspace member, so the build runs
 # there. cargo-pgrx 0.19.1 is installed into the source tree so it does not
 # collide with VectorChord's 0.17.0 or pg_jsonschema's 0.19.2 CLIs.
-STANNUM_COMMIT := 6ad9523b308d648104ade4d9ae56e66589510584
+STANNUM_COMMIT := 3227d7afecd2b66e669c083266043c7cb6f9ada5
 STANNUM_REPO := https://github.com/wuxianliang/stannum.git
 STANNUM_DIR := stannum-$(STANNUM_COMMIT)
 STANNUM_SOURCE_VERIFIED := $(STANNUM_DIR)/.pgembed-source-verified
