@@ -348,7 +348,7 @@ jobs:
           overwrite: true
 
   stannum_release_gate:
-    name: Stannum 0.5.0 release gate on ${{ matrix.os }}-${{ matrix.arch }}
+    name: Stannum release gate on ${{ matrix.os }}-${{ matrix.arch }}
     needs: build_wheels
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -414,8 +414,18 @@ jobs:
                   f"candidate mismatch: wheel built from {stannum['source_commit']}, "
                   f"Makefile pins {pin}"
               )
-          if stannum["version"] != "0.5.0":
-              sys.exit(f"candidate is stannum {stannum['version']!r}, expected 0.5.0")
+          # The version is read from the Makefile rather than written here: it went
+          # stale once already, after 0.5.1 shipped and this check still said 0.5.0.
+          version_match = re.search(r"^STANNUM_VERSION\s*:=\s*(\S+)", makefile, re.M)
+          if version_match is None:
+              sys.exit("STANNUM_VERSION is not pinned in pgbuild/Makefile")
+          want = version_match.group(1)
+          if stannum["version"] != want:
+              sys.exit(
+                  f"candidate is stannum {stannum['version']!r}, Makefile declares "
+                  f"{want!r}: the pinned commit ships a different version than this "
+                  "bundle says it ships"
+              )
           print(
               f"candidate: stannum {stannum['version']} @ {stannum['source_commit']} "
               f"(Makefile pin {pin}); postgres {data['postgres']['version']} "
@@ -436,7 +446,7 @@ jobs:
           # skips are explicit rather than implied.
           python -m pip install 'langchain-core>=0.3' 'llama-index-core>=0.11'
           python -c "import pgembed, pgembed_stannum; print(pgembed.__file__)"
-      - name: Stannum 0.5.0 release gate against the installed wheel
+      - name: Stannum release gate against the installed wheel
         # Discharged in a clean environment: the wheel is installed, nothing is
         # editable, and no external prefix can substitute its bundle. The gate
         # asserts the loaded pgembed is the installed one and that its bundle

@@ -17,16 +17,11 @@ from pgembed._bundle_metadata import require_bundle_metadata
 
 TIGERFS_VERSION = "0.7.0"
 
-# Extension versions this tree expects, by Makefile component name. This is the
-# coupling a stale literal breaks: when a pinned repository cuts a release, the
-# version it ships moves and this table has to move with it. The pin check
-# (tools/check_published_pins.py) keeps the commits honest and the source_commit
-# assertions below keep the pins honest; nothing keeps these honest but this
-# table, so the assertion names the component and this file's line when it fires.
-EXPECTED_EXTENSION_VERSIONS = {
-    "stannum": "0.5.1",
-    "pg_typesafe": "0.1.0",
-}
+# The extension versions this tree expects come from pgbuild/Makefile, next to
+# the commits they ship: STANNUM_VERSION and PG_TYPESAFE_VERSION. They live there
+# because the other half of each identity — the commit — is already there, and a
+# release then moves one line in one file. Both were literals in this test and
+# in the gate job's own check, and all three went stale when 0.5.1 shipped.
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MAKEFILE = REPO_ROOT / "pgbuild" / "Makefile"
@@ -185,10 +180,10 @@ def test_release_bundle_contains_complete_attested_extension_set() -> None:
     else:
         # CI builds the pin, which is the fork's 0.1.0 release commit. 0.0.1
         # was the old upstream pin; seeing it again means the pin moved back.
-        expected = EXPECTED_EXTENSION_VERSIONS["pg_typesafe"]
+        expected = makefile_pin("PG_TYPESAFE_VERSION")
         assert typesafe.version == expected, (
-            f"pg_typesafe ships {typesafe.version}, this tree expects {expected}: "
-            "update EXPECTED_EXTENSION_VERSIONS when a pinned repository ships a release"
+            f"pg_typesafe ships {typesafe.version}, the Makefile declares {expected}: "
+            "update PG_TYPESAFE_VERSION when the pinned repository ships a release"
         )
         assert typesafe.source_commit == makefile_pin("PG_TYPESAFE_COMMIT")
     library_path = bundle_root / typesafe.library
@@ -198,10 +193,10 @@ def test_release_bundle_contains_complete_attested_extension_set() -> None:
     assert stannum.requires_preload is False
     assert stannum.preload_name is None
     assert stannum.create_name == "stannum"
-    expected = EXPECTED_EXTENSION_VERSIONS["stannum"]
+    expected = makefile_pin("STANNUM_VERSION")
     assert stannum.version == expected, (
-        f"stannum ships {stannum.version}, this tree expects {expected}: "
-        "update EXPECTED_EXTENSION_VERSIONS when a pinned repository ships a release"
+        f"stannum ships {stannum.version}, the Makefile declares {expected}: "
+        "update STANNUM_VERSION when the pinned repository ships a release"
     )
     assert stannum.has_library is True
     assert stannum.library is not None

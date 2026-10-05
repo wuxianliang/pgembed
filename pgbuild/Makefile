@@ -185,6 +185,7 @@ PGSQL_HTTP_CURL_CONFIG ?= $(shell command -v curl-config 2>/dev/null || echo cur
 # The pin is the fork's main, not the local checkout's tip: their trees are
 # identical, but only the pushed commit can be fetched by SHA.
 PG_TYPESAFE_COMMIT := 11d9358b7f82e3af026e8f706177fa3fda1e6bb5
+PG_TYPESAFE_VERSION := 0.1.0
 PG_TYPESAFE_REPO := https://github.com/wuxianliang/pg_typesafe.git
 PG_TYPESAFE_DIR := pg_typesafe-$(PG_TYPESAFE_COMMIT)
 PG_TYPESAFE_SOURCE_VERIFIED := $(PG_TYPESAFE_DIR)/.pgembed-source-verified
@@ -293,7 +294,15 @@ TIGERFS_SELECTED := $(filter tigerfs,$(EXTENSIONS) $(MAKECMDGOALS))
 # pg-agent v13 baseline, so 0.5.0 is not a candidate: 0.5.1 is the first
 # release that behaves. No catalog object changes between them, so the upgrade
 # is a no-op and object identities survive it.
-STANNUM_COMMIT := 3d9e96bd90faa3a22d7bb0c6585c170df3f2e570
+#
+# STANNUM_VERSION is the version that commit ships, declared here because it is
+# the other half of the identity: the release-gate job and tests/test_bundled_tools.py
+# both read it instead of carrying their own copy, so a stannum release moves one
+# line rather than three. Both came from literals that went stale — 0.5.0 was
+# still expected after 0.5.1 shipped, twice in the tests and once in the gate
+# job's own check.
+STANNUM_COMMIT := 3d9e96bd90faa3a22d7bb0c6585c170df3f2e2e570
+STANNUM_VERSION := 0.5.1
 STANNUM_REPO := https://github.com/wuxianliang/stannum.git
 STANNUM_DIR := stannum-$(STANNUM_COMMIT)
 STANNUM_SOURCE_VERIFIED := $(STANNUM_DIR)/.pgembed-source-verified
