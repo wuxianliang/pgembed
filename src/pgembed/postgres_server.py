@@ -349,7 +349,20 @@ class PostgresServer:
                 if self.system_user is not None and socket_dir != self.pgdata:
                     ensure_prefix_permissions(socket_dir)
                     socket_dir.chmod(0o777)
-                pg_ctl_args = ["-w", "-o", '-h ""', "-o", f"-k {socket_dir}", "-l", str(self.log), "start"]
+                else:
+                    socket_dir.chmod(0o700)
+                pg_ctl_args = [
+                    "-w",
+                    "-o",
+                    '-h ""',
+                    "-o",
+                    f"-k {socket_dir}",
+                    "-o",
+                    "-c unix_socket_permissions=0700",
+                    "-l",
+                    str(self.log),
+                    "start",
+                ]
             else:
                 socket_dir = None
                 host = "127.0.0.1"
