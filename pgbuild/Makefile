@@ -46,11 +46,15 @@ RUST_EXTENSIONS_SUPPORTED := $(if $(filter 1,$(IS_MUSL)),0,1)
 BUILD_JOBS ?= $(shell n=$$(sysctl -n hw.ncpu 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4); if [ $$n -gt 8 ]; then echo 8; else echo $$n; fi)
 
 ifeq ($(RUST_EXTENSIONS_SUPPORTED),1)
-EXTENSIONS ?= pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema pg_typesafe tigerfs stannum
+EXTENSIONS ?= pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema pg_typesafe tigerfs stannum uuid-ossp provsql
 else
-EXTENSIONS ?= pgvector age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema pg_typesafe tigerfs stannum
+EXTENSIONS ?= pgvector age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema pg_typesafe tigerfs stannum uuid-ossp provsql
 endif
 REQUESTED_EXTENSIONS := $(strip $(EXTENSIONS))
+# provsql.control declares `requires = 'uuid-ossp'`; keep the dependency in the
+# requested/attested set even when the caller asks for provsql alone, so the
+# generated metadata can describe the extension provsql needs at CREATE time.
+REQUESTED_EXTENSIONS += $(if $(filter provsql,$(REQUESTED_EXTENSIONS)),$(if $(filter uuid-ossp,$(REQUESTED_EXTENSIONS)),,uuid-ossp))
 UNSUPPORTED_EXTENSIONS :=
 ifeq ($(HAS_LIBCURL),0)
 UNSUPPORTED_EXTENSIONS += pg_net pgsql_http pg_typesafe
@@ -80,6 +84,49 @@ PGVECTOR_TAG := v0.8.2
 PGVECTOR_SHA256 := 69f4019389af05dc1c9548deb8628e62878e6e207c03907f2b8af2016472cdaa
 PGVECTOR_URL := https://github.com/pgvector/pgvector/archive/refs/tags/$(PGVECTOR_TAG).tar.gz
 PGVECTOR_DIR := pgvector-$(PGVECTOR_TAG)
+
+# ProvSQL is pinned to the release tag, not to the 1.14.0-dev snapshot the
+# local spike used: a bundled extension must name an immutable upstream
+# release. 1.13.1 is a PG 11-18 release, and its control file requires
+# uuid-ossp, so the bundle also ships contrib/uuid-ossp (see below).
+PROVSQL_TAG := v1.13.1
+PROVSQL_SHA256 := 93a641154df6117004dbba259687474206caca68adc96c3e52b410e5516667e0
+PROVSQL_URL := https://github.com/PierreSenellart/provsql/archive/refs/tags/$(PROVSQL_TAG).tar.gz
+PROVSQL_DIR := provsql-$(PROVSQL_TAG)
+# ProvSQL links boost_serialization. Link the static archive into provsql.so
+# instead of recording a Homebrew/Manylinux dylib: the shared Homebrew build
+# pulls in a six-dylib chain (thread/date_time/container/chrono/atomic) whose
+# absolute install names the wheel audit rejects. BOOST_INSTALL_PATH is what
+# ProvSQL's Makefile.internal consumes on Darwin; on Linux the system -L path
+# is used, so the same archive comes from boost-devel.
+ifeq ($(HOST_OS),Darwin)
+PROVSQL_BOOST_PREFIX ?= $(shell brew --prefix boost 2>/dev/null)
+else
+PROVSQL_BOOST_PREFIX ?=
+endif
+PROVSQL_BOOST_DIR := $(abspath $(PROVSQL_DIR))/.boost-static
+PROVSQL_BOOST_ARCHIVE := $(PROVSQL_BOOST_DIR)/lib/libboost_serialization.a
+
+# uuid-ossp is a PostgreSQL contrib module, not a separate upstream pin: it is
+# built from the already-pinned PostgreSQL source against a private static
+# OSSP UUID. Static linking keeps uuid-ossp.dylib/so free of a libossp-uuid
+# runtime dependency (and of the Homebrew absolute path a shared build would
+# record). The OSSP tarball is the Debian orig tarball Homebrew also uses.
+OSSP_UUID_TAG := 1.6.2
+OSSP_UUID_SHA256 := 11a615225baa5f8bb686824423f50e4427acd3f70d394765bdff32801f0fd5b0
+OSSP_UUID_URL := https://deb.debian.org/debian/pool/main/o/ossp-uuid/ossp-uuid_$(OSSP_UUID_TAG).orig.tar.gz
+OSSP_UUID_DIR := uuid-$(OSSP_UUID_TAG)
+OSSP_UUID_PREFIX := $(abspath $(OSSP_UUID_DIR))/.prefix
+OSSP_UUID_INSTALLED := $(OSSP_UUID_DIR)/.pgembed-installed
+# OSSP's 2007 config.guess does not know aarch64; Homebrew passes the same
+# --build override for arm64 Linux.
+OSSP_UUID_BUILD_ARGS := --disable-shared --enable-static --without-perl --without-php --without-pgsql
+ifneq ($(filter Linux,$(HOST_OS)),)
+ifneq ($(filter aarch64 arm64,$(HOST_ARCH)),)
+OSSP_UUID_BUILD_ARGS += --build=aarch64-unknown-linux-gnu
+endif
+endif
+UUID_OSSP_DIR := uuid-ossp-$(POSTGRES_SRC_REF)
 
 VECTORCHORD_TAG := 1.1.1
 VECTORCHORD_SHA256 := d70b5595bfc852f1f24c05c0a40272e7deecbb0ddf8ffdddec5afa42c2392b1e
@@ -310,7 +357,7 @@ STANNUM_PGRX_VERSION := 0.19.1
 STANNUM_PGRX_ROOT := $(STANNUM_DIR)/.pgrx-cli
 STANNUM_PGRX_HOME := $(STANNUM_DIR)/.pgrx-home
 
-NATIVE_BUILD_DIRS := $(POSTGRES_SRC) $(POSTGRES_BLD) $(PGVECTOR_DIR) $(VECTORCHORD_DIR) $(AGE_DIR) $(PSQL_BM25S_DIR) $(TIMESCALEDB_DIR) $(PG_CRON_DIR) $(PG_NET_DIR) $(PGSQL_HTTP_DIR) $(PLSH_DIR) $(FIREBIRD_FDW_DIR) $(LIBFQ_DIR) $(LIBTOMMATH_DIR) $(FIREBIRD_FDW_DEPS_DIR) $(PGMQ_DIR) $(PG_PARTMAN_DIR) $(PGTAP_DIR) $(PG_JSONSCHEMA_DIR) $(PG_TYPESAFE_DIR) $(STANNUM_DIR)
+NATIVE_BUILD_DIRS := $(POSTGRES_SRC) $(POSTGRES_BLD) $(PGVECTOR_DIR) $(VECTORCHORD_DIR) $(AGE_DIR) $(PSQL_BM25S_DIR) $(TIMESCALEDB_DIR) $(PG_CRON_DIR) $(PG_NET_DIR) $(PGSQL_HTTP_DIR) $(PLSH_DIR) $(FIREBIRD_FDW_DIR) $(LIBFQ_DIR) $(LIBTOMMATH_DIR) $(FIREBIRD_FDW_DEPS_DIR) $(PGMQ_DIR) $(PG_PARTMAN_DIR) $(PGTAP_DIR) $(PG_JSONSCHEMA_DIR) $(PG_TYPESAFE_DIR) $(STANNUM_DIR) $(OSSP_UUID_DIR) $(PROVSQL_DIR) $(UUID_OSSP_DIR)
 
 .PHONY: FORCE
 FORCE:
@@ -342,6 +389,10 @@ $(POSTGRES_BUNDLE_CONFIG_STAMP): FORCE
 		'final_extensions=$(FINAL_EXTENSIONS)' \
 		'skipped_extensions=$(SKIPPED_EXTENSIONS)' \
 		'pgvector=$(PGVECTOR_TAG):$(PGVECTOR_SHA256)' \
+		'provsql=$(PROVSQL_TAG):$(PROVSQL_SHA256)' \
+		'provsql_boost_prefix=$(PROVSQL_BOOST_PREFIX)' \
+		'uuid-ossp=$(POSTGRES_SOURCE_COMMIT)' \
+		'ossp_uuid=$(OSSP_UUID_TAG):$(OSSP_UUID_SHA256)' \
 		'vectorchord=$(VECTORCHORD_TAG):$(VECTORCHORD_SHA256)' \
 		'age=$(AGE_COMMIT)' \
 		'psql_bm25s=$(PSQL_BM25S_COMMIT)' \
@@ -384,10 +435,12 @@ $(POSTGRES_BUNDLE_CONFIG_STAMP): FORCE
 	rm -rf "$(INSTALL_PREFIX)" $(NATIVE_BUILD_DIRS); \
 	mv -f "$$tmp" "$@"
 
-.PHONY: all postgres pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema pg_typesafe tigerfs stannum relativize bundle-metadata
+.PHONY: all postgres pgvector provsql uuid-ossp vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema pg_typesafe tigerfs stannum relativize bundle-metadata
 all: postgres $(EXTENSIONS) relativize bundle-metadata
 postgres: $(INSTALL_PREFIX)/bin/postgres
 pgvector: postgres $(INSTALL_PREFIX)/lib/postgresql/vector.$(PG_DLSUFFIX)
+provsql: postgres $(INSTALL_PREFIX)/lib/postgresql/provsql.$(PG_DLSUFFIX)
+uuid-ossp: postgres $(INSTALL_PREFIX)/lib/postgresql/uuid-ossp.$(PG_DLSUFFIX)
 vectorchord: postgres $(INSTALL_PREFIX)/lib/postgresql/vchord.$(PG_DLSUFFIX)
 age: postgres $(INSTALL_PREFIX)/lib/postgresql/age.$(PG_DLSUFFIX)
 psql_bm25s: postgres $(INSTALL_PREFIX)/lib/postgresql/psql_bm25s.$(PG_DLSUFFIX)
@@ -466,6 +519,80 @@ $(PGVECTOR_DIR)/Makefile: $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PGVECTOR_DIR).tar.gz
 
 $(INSTALL_PREFIX)/lib/postgresql/vector.$(PG_DLSUFFIX): $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PGVECTOR_DIR)/Makefile $(INSTALL_PREFIX)/bin/postgres
 	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(PGVECTOR_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config -j$(BUILD_JOBS) OPTFLAGS= && $(MAKE) -C $(PGVECTOR_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config OPTFLAGS= install
+
+# --- ProvSQL and its uuid-ossp dependency -------------------------------
+#
+# ProvSQL's control file requires uuid-ossp, and the bundle's PostgreSQL was
+# configured without --with-uuid, so contrib/uuid-ossp is built out of tree
+# from the pinned PostgreSQL source against a private static OSSP UUID. That
+# keeps both artifacts free of a libossp-uuid runtime dependency.
+ifeq ($(HOST_OS),Darwin)
+PROVSQL_BOOST_DEP := $(PROVSQL_BOOST_ARCHIVE)
+PROVSQL_BOOST_MAKE_ARGS := BOOST_INSTALL_PATH=$(PROVSQL_BOOST_DIR)
+else
+PROVSQL_BOOST_DEP :=
+PROVSQL_BOOST_MAKE_ARGS :=
+endif
+
+$(OSSP_UUID_DIR).tar.gz:
+	@set -eu; \
+	tmp="$@.tmp.$$$$"; trap 'rm -f "$$tmp"' EXIT HUP INT TERM; \
+	curl --fail --location --show-error --proto '=https' --proto-redir '=https' --retry 3 -o "$$tmp" "$(OSSP_UUID_URL)"; \
+	printf '%s  %s\n' '$(OSSP_UUID_SHA256)' "$$tmp" | $(SHA256_CMD) -c -; \
+	mv -f "$$tmp" "$@"
+
+$(OSSP_UUID_DIR)/configure: $(OSSP_UUID_DIR).tar.gz
+	printf '%s  %s\n' '$(OSSP_UUID_SHA256)' '$(OSSP_UUID_DIR).tar.gz' | $(SHA256_CMD) -c -
+	rm -rf "$(OSSP_UUID_DIR)"
+	mkdir -p "$(OSSP_UUID_DIR)"
+	tar xzf "$(OSSP_UUID_DIR).tar.gz" -C "$(OSSP_UUID_DIR)" --strip-components=1
+	touch $@
+
+$(OSSP_UUID_INSTALLED): $(OSSP_UUID_DIR)/configure
+	cd "$(OSSP_UUID_DIR)" && ./configure \
+		--prefix="$(OSSP_UUID_PREFIX)" \
+		--includedir="$(OSSP_UUID_PREFIX)/include/ossp" \
+		$(OSSP_UUID_BUILD_ARGS) \
+		CFLAGS="-O2 -fcommon -Wno-implicit-function-declaration"
+	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C "$(OSSP_UUID_DIR)" -j$(BUILD_JOBS)
+	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C "$(OSSP_UUID_DIR)" install
+	touch $@
+
+$(UUID_OSSP_DIR)/Makefile: $(POSTGRES_SOURCE_VERIFIED)
+	rm -rf "$(UUID_OSSP_DIR)"
+	mkdir -p "$(UUID_OSSP_DIR)"
+	cp -R "$(POSTGRES_SRC)/contrib/uuid-ossp/." "$(UUID_OSSP_DIR)/"
+	touch $@
+
+$(INSTALL_PREFIX)/lib/postgresql/uuid-ossp.$(PG_DLSUFFIX): $(POSTGRES_BUNDLE_CONFIG_STAMP) $(UUID_OSSP_DIR)/Makefile $(OSSP_UUID_INSTALLED) $(INSTALL_PREFIX)/bin/postgres
+	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C "$(UUID_OSSP_DIR)" USE_PGXS=1 PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config PG_CPPFLAGS="-DHAVE_UUID_OSSP -DHAVE_OSSP_UUID_H -I$(OSSP_UUID_PREFIX)/include" UUID_LIBS="$(OSSP_UUID_PREFIX)/lib/libuuid.a" -j$(BUILD_JOBS) && $(MAKE) -C "$(UUID_OSSP_DIR)" USE_PGXS=1 PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config PG_CPPFLAGS="-DHAVE_UUID_OSSP -DHAVE_OSSP_UUID_H -I$(OSSP_UUID_PREFIX)/include" UUID_LIBS="$(OSSP_UUID_PREFIX)/lib/libuuid.a" install
+
+$(PROVSQL_DIR).tar.gz:
+	@set -eu; \
+	tmp="$@.tmp.$$$$"; trap 'rm -f "$$tmp"' EXIT HUP INT TERM; \
+	curl --fail --location --show-error --proto '=https' --proto-redir '=https' --retry 3 -o "$$tmp" "$(PROVSQL_URL)"; \
+	printf '%s  %s\n' '$(PROVSQL_SHA256)' "$$tmp" | $(SHA256_CMD) -c -; \
+	mv -f "$$tmp" "$@"
+
+$(PROVSQL_DIR)/Makefile: $(PROVSQL_DIR).tar.gz
+	printf '%s  %s\n' '$(PROVSQL_SHA256)' '$(PROVSQL_DIR).tar.gz' | $(SHA256_CMD) -c -
+	rm -rf "$(PROVSQL_DIR)"
+	mkdir -p "$(PROVSQL_DIR)"
+	tar xzf "$(PROVSQL_DIR).tar.gz" -C "$(PROVSQL_DIR)" --strip-components=1
+	touch $@
+
+$(PROVSQL_BOOST_ARCHIVE): $(PROVSQL_DIR)/Makefile
+	@set -eu; \
+	if test -z "$(PROVSQL_BOOST_PREFIX)" || test ! -f "$(PROVSQL_BOOST_PREFIX)/lib/libboost_serialization.a"; then \
+		echo "provsql requires Boost: install it (brew install boost) or set PROVSQL_BOOST_PREFIX" >&2; \
+		exit 1; \
+	fi; \
+	mkdir -p "$(PROVSQL_BOOST_DIR)/lib"; \
+	cp "$(PROVSQL_BOOST_PREFIX)/lib/libboost_serialization.a" "$(PROVSQL_BOOST_ARCHIVE)"; \
+	ln -sfn "$(PROVSQL_BOOST_PREFIX)/include" "$(PROVSQL_BOOST_DIR)/include"
+
+$(INSTALL_PREFIX)/lib/postgresql/provsql.$(PG_DLSUFFIX): $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PROVSQL_DIR)/Makefile $(PROVSQL_BOOST_DEP) $(INSTALL_PREFIX)/lib/postgresql/uuid-ossp.$(PG_DLSUFFIX) $(INSTALL_PREFIX)/bin/postgres
+	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C "$(PROVSQL_DIR)" PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config $(PROVSQL_BOOST_MAKE_ARGS) -j$(BUILD_JOBS) && $(MAKE) -C "$(PROVSQL_DIR)" PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config $(PROVSQL_BOOST_MAKE_ARGS) install
 
 $(VECTORCHORD_DIR).tar.gz:
 	@set -eu; \
@@ -844,6 +971,9 @@ bundle-metadata: postgres $(EXTENSIONS) relativize
 		--tigerfs-version "$(TIGERFS_TAG)" \
 		--tigerfs-sha256 "$(if $(filter tigerfs,$(FINAL_EXTENSIONS)),$(TIGERFS_EXPECTED_SHA256),)" \
 		--source-lock "pgvector=sha256:$(PGVECTOR_SHA256):$(PGVECTOR_TAG)" \
+		--source-lock "provsql=sha256:$(PROVSQL_SHA256):$(PROVSQL_TAG)" \
+		--source-lock "ossp-uuid=sha256:$(OSSP_UUID_SHA256):$(OSSP_UUID_TAG)" \
+		--source-lock "uuid-ossp=commit:$(POSTGRES_SOURCE_COMMIT)" \
 		--source-lock "vectorchord=sha256:$(VECTORCHORD_SHA256):$(VECTORCHORD_TAG)" \
 		--source-lock "age=commit:$(AGE_COMMIT)" \
 		--source-lock "psql_bm25s=commit:$(PSQL_BM25S_COMMIT)" \

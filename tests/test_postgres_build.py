@@ -109,6 +109,9 @@ def test_identical_stamp_preserves_mtime_and_complete_prefix(tmp_path: Path) -> 
         ("PG_TYPESAFE_COMMIT", "0" * 40),
         ("STANNUM_COMMIT", "0" * 40),
         ("STANNUM_PGRX_VERSION", "0.16.1"),
+        ("PROVSQL_SHA256", "0" * 64),
+        ("OSSP_UUID_SHA256", "0" * 64),
+        ("POSTGRES_SOURCE_COMMIT", "0" * 40),
         ("OPENSSL_PREFIX", "/fixture/openssl"),
     ],
 )
@@ -196,6 +199,10 @@ def test_source_lock_and_toolchain_are_recorded(tmp_path: Path) -> None:
     assert "pg_typesafe_patch=" not in text
     assert f"stannum={makefile_pin('STANNUM_COMMIT')}" in text
     assert "stannum_pgrx=0.19.1" in text
+    assert f"provsql={makefile_pin('PROVSQL_TAG')}:{makefile_pin('PROVSQL_SHA256')}" in text
+    assert "provsql_boost_prefix=" in text
+    assert f"uuid-ossp={makefile_pin('POSTGRES_SOURCE_COMMIT')}" in text
+    assert f"ossp_uuid={makefile_pin('OSSP_UUID_TAG')}:{makefile_pin('OSSP_UUID_SHA256')}" in text
     assert "contrib_install=v1" in text
     assert "recipe=pgembed-postgresql-18-bundle-v2" in text
     assert "postgres_configure=--without-readline --without-icu --with-libxml --with-ssl=openssl" in text

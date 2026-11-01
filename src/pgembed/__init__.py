@@ -59,6 +59,8 @@ EXTENSION_PACKAGES = {
     "pg_jsonschema": None,
     "pg_typesafe": None,
     "stannum": "pgembed_stannum",
+    "uuid-ossp": None,
+    "provsql": None,
 }
 
 EXTENSION_ARTIFACT_STEMS = {
@@ -83,9 +85,16 @@ EXTENSION_SO_FILES = {
     "pg_jsonschema": ("pg_jsonschema.dylib", "pg_jsonschema.so", "pg_jsonschema.dll"),
     "pg_typesafe": ("typesafe.dylib", "typesafe.so", "typesafe.dll"),
     "stannum": ("stannum.dylib", "stannum.so", "stannum.dll"),
+    "uuid-ossp": ("uuid-ossp.dylib", "uuid-ossp.so", "uuid-ossp.dll"),
+    "provsql": ("provsql.dylib", "provsql.so", "provsql.dll"),
 }
 
-EXTENSION_PRECEDENCE: dict[str, tuple[str, ...]] = {}
+# `provsql.control` declares `requires = 'uuid-ossp'`; PostgreSQL refuses to
+# install a dependent extension unless the requirement is already installed.
+# create_extension() walks this map before issuing CREATE EXTENSION provsql.
+EXTENSION_PRECEDENCE: dict[str, tuple[str, ...]] = {
+    "provsql": ("uuid-ossp",),
+}
 EXTENSION_NAMES = tuple(EXTENSION_PACKAGES)
 AVAILABLE_EXTENSIONS: dict[str, bool] = {name: False for name in EXTENSION_NAMES}
 _EXTENSION_PATHS: dict[str, Path] = {}
@@ -253,6 +262,8 @@ def get_extension_create_name(name: str) -> str:
         "pg_jsonschema": "pg_jsonschema",
         "pg_typesafe": "typesafe",
         "stannum": "stannum",
+        "uuid-ossp": "uuid-ossp",
+        "provsql": "provsql",
     }.get(name, name)
 
 

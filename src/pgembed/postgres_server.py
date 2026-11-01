@@ -135,6 +135,17 @@ def _read_log_tail(path: Path) -> str:
     return "\n".join(lines[-LOG_TAIL_MAX_LINES:])
 
 
+def _extension_sql_name(name: str) -> str:
+    """Quote an extension name for CREATE EXTENSION when it is not an identifier.
+
+    ``uuid-ossp`` is the first bundled extension whose name needs quoting; the
+    SQL layer accepts it only as ``"uuid-ossp"``.
+    """
+    if name.isidentifier():
+        return name
+    return '"' + name.replace('"', '""') + '"'
+
+
 class PostgresServer:
     """A process-safe handle for one embedded PostgreSQL data directory."""
 
@@ -524,6 +535,8 @@ class PostgresServer:
             "pg_jsonschema": "pg_jsonschema",
             "pg_typesafe": "pg_typesafe",
             "stannum": "stannum",
+            "uuid-ossp": "uuid-ossp",
+            "provsql": "provsql",
         }
         package_name = extension_map.get(extension_name, extension_name)
         if not pgembed.has_extension(package_name):
@@ -531,7 +544,9 @@ class PostgresServer:
                 create_name = get_extension_create_name(package_name)
                 control = pgembed.EXTENSION_SHARE_PATH / f"{create_name}.control"
                 if control.is_file():
-                    return self.psql(f"CREATE EXTENSION IF NOT EXISTS {create_name};")
+                    return self.psql(
+                        f"CREATE EXTENSION IF NOT EXISTS {_extension_sql_name(create_name)};"
+                    )
             available = [key for key, value in AVAILABLE_EXTENSIONS.items() if value]
             raise RuntimeError(
                 f"Extension {extension_name!r} is not available. Available extensions: {available}"
@@ -539,10 +554,12 @@ class PostgresServer:
         for predecessor in pgembed.EXTENSION_PRECEDENCE.get(package_name, ()):
             if pgembed.has_extension(predecessor):
                 self.psql(
-                    f"CREATE EXTENSION IF NOT EXISTS {get_extension_create_name(predecessor)};"
+                    "CREATE EXTENSION IF NOT EXISTS "
+                    f"{_extension_sql_name(get_extension_create_name(predecessor))};"
                 )
         return self.psql(
-            f"CREATE EXTENSION IF NOT EXISTS {get_extension_create_name(package_name)};"
+            "CREATE EXTENSION IF NOT EXISTS "
+            f"{_extension_sql_name(get_extension_create_name(package_name))};"
         )
 
     def age_setup(self, conn=None):

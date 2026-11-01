@@ -23,7 +23,7 @@ PUBLIC_METADATA_MODE = 0o644
 COMMIT_IDENTITY = re.compile(r"^[0-9a-f]{40}$")
 SHA256_IDENTITY = re.compile(r"^[0-9a-f]{64}$")
 # Components that are not PostgreSQL extensions but still have Makefile pins.
-AUXILIARY_LOCK_NAMES = {"libfq", "libtommath", "firebird-client", "tigerfs"}
+AUXILIARY_LOCK_NAMES = {"libfq", "libtommath", "firebird-client", "tigerfs", "ossp-uuid"}
 
 # Structural catalog only. version / source_ref / source_commit / source_sha256
 # are not stored here: built records take identity from --source-lock and
@@ -83,6 +83,22 @@ EXTENSIONS: dict[str, dict[str, Any]] = {
         create_name="stannum",
         preload_name=None,
         requires_preload=False,
+    ),
+    # PostgreSQL contrib, rebuilt out of tree against a private static OSSP
+    # UUID because the bundled PostgreSQL was configured without --with-uuid.
+    # Its source identity is the pinned PostgreSQL commit.
+    "uuid-ossp": dict(
+        stem="uuid-ossp",
+        create_name="uuid-ossp",
+        preload_name=None,
+        requires_preload=False,
+        submodule_locks=("ossp-uuid",),
+    ),
+    "provsql": dict(
+        stem="provsql",
+        create_name="provsql",
+        preload_name="provsql",
+        requires_preload=True,
     ),
 }
 
@@ -692,6 +708,7 @@ def source_locks_from_stamp(stamp: dict[str, str]) -> list[str]:
         "pgmq",
         "pg_partman",
         "pgtap",
+        "provsql",
     }
     commit_only = {
         "age",
@@ -700,6 +717,7 @@ def source_locks_from_stamp(stamp: dict[str, str]) -> list[str]:
         "pg_jsonschema",
         "pg_typesafe",
         "stannum",
+        "uuid-ossp",
     }
     tag_commit = {"pg_cron", "pg_net"}
     for name in tag_sha:
@@ -723,6 +741,12 @@ def source_locks_from_stamp(stamp: dict[str, str]) -> list[str]:
     if firebird_client:
         parts = firebird_client.split(":")
         locks.append(f"firebird-client=sha256:{parts[-1]}:{parts[0]}")
+    # The Makefile variable is OSSP_UUID_* (underscore) but the published lock
+    # name is the upstream component name, ossp-uuid.
+    ossp_uuid = stamp.get("ossp_uuid")
+    if ossp_uuid and ":" in ossp_uuid:
+        tag, _, digest = ossp_uuid.partition(":")
+        locks.append(f"ossp-uuid=sha256:{digest}:{tag}")
     tigerfs = stamp.get("tigerfs")
     if tigerfs:
         parts = tigerfs.split(":")

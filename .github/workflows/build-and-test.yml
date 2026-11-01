@@ -84,17 +84,17 @@ jobs:
             os: macos-latest
             arch: arm64
             deployment-target: '26.0' # minos 26.0. This does not claim compatibility with older macOS.
-            extensions: pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema pg_typesafe stannum tigerfs
+            extensions: pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema pg_typesafe stannum tigerfs uuid-ossp provsql
           - runner: ubuntu-latest
             os: ubuntu-latest
             arch: x86_64
             deployment-target: ''
-            extensions: pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema pg_typesafe stannum tigerfs
+            extensions: pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema pg_typesafe stannum tigerfs uuid-ossp provsql
           - runner: ubuntu-24.04-arm
             os: ubuntu-latest
             arch: aarch64
             deployment-target: ''
-            extensions: pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema pg_typesafe stannum tigerfs
+            extensions: pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema pg_typesafe stannum tigerfs uuid-ossp provsql
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -177,7 +177,7 @@ jobs:
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
           CIBW_BEFORE_ALL_MACOS: |
-            brew install jq llvm cmake ninja openssl icu4c@78 curl bison
+            brew install jq llvm cmake ninja openssl icu4c@78 curl bison boost
             export IS_MUSL=0
             rustup install 1.96.0
             rustup default 1.96.0
@@ -188,10 +188,10 @@ jobs:
             if command -v yum &> /dev/null; then
               # full perl: the minimal perl in the manylinux_2_34 image lacks
               # FindBin.pm, which postgres's genbki.pl/gen_node_support.pl need
-              yum install -y ccache jq gcc perl openssl-devel zlib-devel libxml2-devel llvm-devel clang-devel pkg-config cmake ninja-build libcurl-devel libicu-devel glib2-devel flex bison
+              yum install -y ccache jq gcc perl openssl-devel zlib-devel libxml2-devel llvm-devel clang-devel pkg-config cmake ninja-build libcurl-devel libicu-devel glib2-devel flex bison boost-devel
             elif command -v apt-get &> /dev/null; then
               apt-get update
-              apt-get install -y ccache jq gcc perl libssl-dev zlib1g-dev libxml2-dev llvm-dev clang-dev pkg-config cmake ninja-build libcurl4-openssl-dev libicu-dev libglib2.0-dev flex bison
+              apt-get install -y ccache jq gcc perl libssl-dev zlib1g-dev libxml2-dev llvm-dev clang-dev pkg-config cmake ninja-build libcurl4-openssl-dev libicu-dev libglib2.0-dev flex bison libboost-serialization-dev
             fi
             # pg_net >= 0.20 needs the libcurl 7.83+ API; distro libcurls are
             # older, so build a private curl. auditwheel vendors the resulting

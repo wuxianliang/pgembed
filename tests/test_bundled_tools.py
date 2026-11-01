@@ -102,6 +102,8 @@ def test_release_bundle_contains_complete_attested_extension_set() -> None:
         "pg_jsonschema",
         "pg_typesafe",
         "stannum",
+        "uuid-ossp",
+        "provsql",
     }
     assert set(metadata.extensions) == expected
     assert "pg_textsearch" not in metadata.extensions
@@ -203,6 +205,32 @@ def test_release_bundle_contains_complete_attested_extension_set() -> None:
     assert stannum.source_commit == makefile_pin("STANNUM_COMMIT")
     stannum_library_path = bundle_root / stannum.library
     assert stannum_library_path.is_file(), f"stannum library is missing: {stannum_library_path}"
+
+    uuid_ossp = metadata.extensions["uuid-ossp"]
+    assert uuid_ossp.requires_preload is False
+    assert uuid_ossp.preload_name is None
+    assert uuid_ossp.create_name == "uuid-ossp"
+    assert uuid_ossp.version == "1.1"
+    assert uuid_ossp.has_library is True
+    assert uuid_ossp.library is not None
+    # contrib/uuid-ossp is rebuilt from the pinned PostgreSQL tree, against a
+    # private OSSP UUID; the submodule lock names that dependency.
+    assert uuid_ossp.source_commit == makefile_pin("POSTGRES_SOURCE_COMMIT")
+    assert uuid_ossp.source_submodules.get("ossp-uuid")
+    uuid_ossp_library_path = bundle_root / uuid_ossp.library
+    assert uuid_ossp_library_path.is_file(), f"uuid-ossp library is missing: {uuid_ossp_library_path}"
+
+    provsql = metadata.extensions["provsql"]
+    assert provsql.requires_preload is True
+    assert provsql.preload_name == "provsql"
+    assert provsql.create_name == "provsql"
+    assert provsql.version == makefile_pin("PROVSQL_TAG").removeprefix("v")
+    assert provsql.has_library is True
+    assert provsql.library is not None
+    assert provsql.source_ref == makefile_pin("PROVSQL_TAG")
+    assert provsql.source_sha256 == makefile_pin("PROVSQL_SHA256")
+    provsql_library_path = bundle_root / provsql.library
+    assert provsql_library_path.is_file(), f"provsql library is missing: {provsql_library_path}"
 
     firebird = metadata.extensions["firebird_fdw"]
     assert firebird.requires_preload is False

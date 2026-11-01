@@ -41,6 +41,7 @@ Think of it like SQLite, but with the power of PostgreSQL. Just `pip install pge
 - **Message queue**: Includes [pgmq](https://github.com/pgmq/pgmq) for a lightweight Postgres-native queue (SQS/RSMQ-style send/read/archive) and [pg_partman](https://github.com/pgpartman/pg_partman) for partitioned queues
 - **Validation & tests**: Includes [pg_jsonschema](https://github.com/supabase/pg_jsonschema) for JSON Schema checks on `json`/`jsonb`, and [pgTAP](https://pgtap.org/) for SQL-level TAP tests
 - **AI classification**: Includes [pg_typesafe](https://github.com/giuliosmall/pg_typesafe) **0.1.0** to call TypeSafe AI (Jev) from SQL. Keeps the `typesafe_*` text classifiers and adds native `jev_*` row predicates (pg-jev **0.2.0** API: `WHERE jev(tbl, '…')`, `jev_choice`, `jev_score`, …). Requires libcurl.
+- **Provenance & uncertainty**: Includes [ProvSQL](https://github.com/PierreSenellart/provsql) for semiring provenance (`why`/`how`/`where`), probabilities, and Shapley/Banzhaf attribution. Requires `shared_preload_libraries=["provsql"]`.
 - **Indexed search engine**: Includes [stannum](https://github.com/wuxianliang/stannum) (our fork of TeamSpringbird/stannum, a fork of PlanetScale Lead; carries the `jieba` word-level Chinese tokenizer) for BM25 search with Boolean/phrase/proximity TINQL queries, highlighting, and `stannum` access-method indexes (Rust/pgrx; development software)
 - **PostgreSQL contrib**: `pg_stat_statements`, `pg_trgm`, `unaccent`, `pgcrypto`, `ltree`, `hstore`, and `postgres_fdw` are installed with the server so `CREATE EXTENSION` works without extra packages
 
@@ -171,6 +172,8 @@ pgembed bundles a curated set of PostgreSQL extensions, built specifically for P
 | [pg_jsonschema](https://github.com/supabase/pg_jsonschema) | `pg_jsonschema` | `pg_jsonschema` | — | JSON Schema validation (Rust/pgrx) |
 | [pg_typesafe](https://github.com/giuliosmall/pg_typesafe) | `typesafe` | `pg_typesafe` | — | **0.1.0**: `typesafe_*` classifiers plus native `jev_*` row predicates (pg-jev 0.2.0). TypeSafe key or OpenRouter Decisions API. `\dx` comment: *TypeSafe AI client and native Jev row predicates*. Requires libcurl. |
 | [stannum](https://github.com/wuxianliang/stannum) | `stannum` | `stannum` | — | BM25 search engine with TINQL Boolean/phrase queries, highlighting, and exact counts under concurrent writes (Rust/pgrx; development software; our fork of TeamSpringbird/stannum with the `jieba` tokenizer) |
+| [uuid-ossp](https://www.postgresql.org/docs/18/uuid-ossp.html) | `uuid-ossp` | `uuid-ossp` | — | PostgreSQL contrib UUID generators; required by ProvSQL (OSSP UUID linked statically) |
+| [ProvSQL](https://github.com/PierreSenellart/provsql) | `provsql` | `provsql` | `provsql` | semiring provenance: `why`/`how`/`where`, probabilities, Shapley/Banzhaf; uses `uuid-ossp` |
 
 `pgembed-pgvector` is also published as a standalone wheel; the rest are bundled into the base `pgembed` wheel.
 
@@ -183,7 +186,7 @@ import pgembed
 
 # Check which extensions are available
 print(pgembed.list_extensions())
-# {'pgvector': True, 'vectorchord': True, 'age': True, 'psql_bm25s': True, 'timescaledb': True, 'pg_cron': True, 'pg_net': True, 'pgsql_http': True, 'plsh': True, 'firebird_fdw': True, 'pgmq': True, 'pg_partman': True, 'pgtap': True, 'pg_jsonschema': True, 'pg_typesafe': True, 'stannum': True}
+# {'pgvector': True, 'vectorchord': True, 'age': True, 'psql_bm25s': True, 'timescaledb': True, 'pg_cron': True, 'pg_net': True, 'pgsql_http': True, 'plsh': True, 'firebird_fdw': True, 'pgmq': True, 'pg_partman': True, 'pgtap': True, 'pg_jsonschema': True, 'pg_typesafe': True, 'stannum': True, 'uuid-ossp': True, 'provsql': True}
 
 # Check if a specific extension is available, then create it
 if pgembed.has_extension('vectorchord'):
@@ -426,7 +429,7 @@ pgembed's release pipeline is Darwin/Linux-only:
 
 - **macOS:** arm64 only, with deployment target **26.0**. The project does not claim Intel, universal2, or older macOS compatibility.
 - **Linux:** x86_64 and aarch64.
-- **Extensions:** the bundled extension set is built for those release targets. `pg_net` and `pgsql_http` additionally require **libcurl ≥ 7.83** (`pg_typesafe` links the same libcurl provider and needs ≥ 7.61): CI builds a private curl 8 via `tools/build_curl.sh` (auditwheel vendors `libcurl.so.4` into the Linux wheels); on macOS they link the SDK/system libcurl. Local Linux hosts need a curl that new, or run `tools/build_curl.sh` and pass `PG_NET_CURL_PREFIX` / `PGSQL_HTTP_CURL_CONFIG` (`pg_typesafe` picks the prefix up from `PG_NET_CURL_PREFIX` via pkg-config). `firebird_fdw` vendors [libfq](https://github.com/ibarwick/libfq) 0.6.2 and the Firebird 5.0.3 **client** libraries (plus libtommath on Linux); it does not ship a Firebird server. musl builds skip it. `pgcrypto` needs OpenSSL: Linux uses the distro library; macOS vendors Homebrew `openssl@3` into the prefix (`@loader_path`) because Apple no longer ships `/usr/lib/libssl`. musl builds skip VectorChord, `pg_jsonschema`, and `stannum`.
+- **Extensions:** the bundled extension set is built for those release targets. `pg_net` and `pgsql_http` additionally require **libcurl ≥ 7.83** (`pg_typesafe` links the same libcurl provider and needs ≥ 7.61): CI builds a private curl 8 via `tools/build_curl.sh` (auditwheel vendors `libcurl.so.4` into the Linux wheels); on macOS they link the SDK/system libcurl. Local Linux hosts need a curl that new, or run `tools/build_curl.sh` and pass `PG_NET_CURL_PREFIX` / `PGSQL_HTTP_CURL_CONFIG` (`pg_typesafe` picks the prefix up from `PG_NET_CURL_PREFIX` via pkg-config). `firebird_fdw` vendors [libfq](https://github.com/ibarwick/libfq) 0.6.2 and the Firebird 5.0.3 **client** libraries (plus libtommath on Linux); it does not ship a Firebird server. musl builds skip it. `pgcrypto` needs OpenSSL: Linux uses the distro library; macOS vendors Homebrew `openssl@3` into the prefix (`@loader_path`) because Apple no longer ships `/usr/lib/libssl`. musl builds skip VectorChord, `pg_jsonschema`, and `stannum`. `provsql` needs Boost headers and `libboost_serialization` at build time (Homebrew `boost` on macOS, where the static archive is linked into `provsql.dylib`; `boost-devel` on Linux, where auditwheel vendors the shared library). Its `uuid-ossp` dependency is built from the pinned PostgreSQL source against a private static OSSP UUID, so neither artifact records a Homebrew path.
 - **TigerFS** *(companion tool, not an extension)*: uses NFS on macOS and FUSE on Linux. Linux mounts require usable `/dev/fuse` access, so mount tests are normally unavailable in default containers, Google Colab, and other unprivileged sandboxes unless the host grants the needed device/capability. The embedded database and non-mount TigerFS package tests do not require FUSE.
 
 ### Preload before start
@@ -446,6 +449,19 @@ with pgembed.get_server(
     server.create_extension("pg_net")
 ```
 
+ProvSQL has the same preload requirement. `create_extension("provsql")` installs
+its `uuid-ossp` dependency first (ProvSQL's control file declares
+`requires = 'uuid-ossp'`):
+
+```python
+with pgembed.get_server(
+    "/path/to/my/data/dir",
+    shared_preload_libraries=["provsql"],
+) as server:
+    server.create_extension("provsql")
+    server.psql("SET search_path TO public, provsql;")
+```
+
 ### Building specific extensions
 
 To build only specific extensions:
@@ -453,6 +469,9 @@ To build only specific extensions:
 ```bash
 # Build only pgvector
 make pgvector
+
+# Build only ProvSQL (also builds its uuid-ossp dependency)
+make provsql
 
 # Build only vectorchord
 make vectorchord
@@ -502,7 +521,7 @@ make pg_typesafe
 make stannum
 
 # Build specific combination
-make EXTENSIONS="pgvector vectorchord timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema pg_typesafe stannum" all
+make EXTENSIONS="pgvector vectorchord timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema pg_typesafe stannum uuid-ossp provsql" all
 ```
 
 ## History
@@ -511,4 +530,4 @@ pgembed is a fork of [pgserver](https://github.com/orm011/pgserver), which was i
 
 - Bundled Darwin/Linux releases for macOS arm64 and Linux x86_64/aarch64
 - Robust process management and cleanup
-- Built-in pgvector, VectorChord, Apache AGE, psql_bm25s, TimescaleDB, pg_cron, pg_net, firebird_fdw, pgmq, pg_partman, pgTAP, pg_jsonschema, pg_typesafe, and stannum extensions
+- Built-in pgvector, VectorChord, Apache AGE, psql_bm25s, TimescaleDB, pg_cron, pg_net, firebird_fdw, pgmq, pg_partman, pgTAP, pg_jsonschema, pg_typesafe, stannum, uuid-ossp, and ProvSQL extensions

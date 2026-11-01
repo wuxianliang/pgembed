@@ -147,6 +147,24 @@ def test_vectorchord_create_extension_names(monkeypatch, extension_name: str, ex
     assert commands == [expected_sql]
 
 
+def test_provsql_create_extension_quotes_its_dependency(monkeypatch):
+    monkeypatch.setitem(pgembed.AVAILABLE_EXTENSIONS, "provsql", True)
+    monkeypatch.setitem(pgembed.AVAILABLE_EXTENSIONS, "uuid-ossp", True)
+    pg = pgembed.PostgresServer.__new__(pgembed.PostgresServer)
+    commands = []
+
+    def fake_psql(command: str) -> str:
+        commands.append(command)
+        return "CREATE EXTENSION\n"
+
+    monkeypatch.setattr(pg, "psql", fake_psql)
+    assert pg.create_extension("provsql").strip() == "CREATE EXTENSION"
+    assert commands == [
+        'CREATE EXTENSION IF NOT EXISTS "uuid-ossp";',
+        "CREATE EXTENSION IF NOT EXISTS provsql;",
+    ]
+
+
 @pytest.fixture
 def tmp_postgres_vchord():
     _require_extension("vectorchord")
@@ -385,6 +403,47 @@ def test_pgvector(tmp_postgres):
     _require_extension("pgvector")
     ret = tmp_postgres.psql("CREATE EXTENSION vector;")
     assert ret.strip() == "CREATE EXTENSION"
+
+
+@pytest.fixture
+def tmp_postgres_provsql():
+    _require_extension("provsql")
+    tmp_pg_data = tempfile.mkdtemp()
+    with pgembed.get_server(
+        tmp_pg_data,
+        cleanup_mode='delete',
+        shared_preload_libraries='provsql',
+    ) as pg:
+        yield pg
+
+
+def test_provsql(tmp_postgres_provsql):
+    _require_extension("provsql")
+    pg = tmp_postgres_provsql
+    assert pgembed.get_extension_create_name("provsql") == "provsql"
+    assert pgembed.has_extension("uuid-ossp")
+    # create_extension walks EXTENSION_PRECEDENCE, so provsql's control-file
+    # requirement (requires = 'uuid-ossp') is installed first.
+    assert pg.create_extension("provsql").strip() == "CREATE EXTENSION"
+    assert "uuid-ossp" in pg.psql("SELECT extname FROM pg_extension;")
+    output = pg.psql(
+        """
+        SET search_path TO public, provsql;
+        CREATE TABLE sightings(person text, witness text, count int NOT NULL);
+        SELECT add_provenance('sightings');
+        INSERT INTO sightings(person, witness, count)
+        VALUES ('Alice', 'w1', 1), ('Alice', 'w2', 1), ('Bob', 'w3', 1);
+        SELECT create_provenance_mapping('witness_mapping', 'sightings', 'witness');
+        SELECT create_provenance_mapping('count_mapping', 'sightings', 'count');
+        CREATE TABLE suspects AS SELECT DISTINCT person FROM sightings;
+        SELECT person,
+               sr_formula(provenance(), 'witness_mapping') AS formula,
+               sr_counting(provenance(), 'count_mapping') AS count
+        FROM suspects ORDER BY person;
+        """
+    )
+    assert "w1 ⊕ w2" in output
+    assert "w3" in output
 
 
 def test_age(tmp_postgres):
@@ -903,18 +962,22 @@ RELEASE_EXTENSION_ORDER = (
     "pg_jsonschema",
     "pg_typesafe",
     "stannum",
+    "uuid-ossp",
+    "provsql",
 )
 RELEASE_PRELOAD_PACKAGES = (
     "vectorchord",
     "timescaledb",
     "pg_cron",
     "pg_net",
+    "provsql",
 )
 RELEASE_PRELOAD_NAMES = (
     "vchord",
     "timescaledb",
     "pg_cron",
     "pg_net",
+    "provsql",
 )
 
 

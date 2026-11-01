@@ -93,9 +93,15 @@ DEFAULT_SOURCE_LOCKS = {
     # Makefile's own (ad4d3b74 recorded while the Makefile said 3227d7af), which
     # is the failure mode this dict exists to catch.
     "stannum": f"stannum=commit:{_MAKEFILE_PINS['STANNUM_COMMIT']}",
+    "provsql": f"provsql=sha256:{_MAKEFILE_PINS['PROVSQL_SHA256']}:{_MAKEFILE_PINS['PROVSQL_TAG']}",
+    # contrib/uuid-ossp is rebuilt from the pinned PostgreSQL tree; the OSSP
+    # library it statically links is a separate pinned component.
+    "uuid-ossp": f"uuid-ossp=commit:{_MAKEFILE_PINS['POSTGRES_SOURCE_COMMIT']}",
+    "ossp-uuid": f"ossp-uuid=sha256:{_MAKEFILE_PINS['OSSP_UUID_SHA256']}:{_MAKEFILE_PINS['OSSP_UUID_TAG']}",
     "tigerfs": "tigerfs=sha256:0000000000000000000000000000000000000000000000000000000000000000:v0.7.0",
 }
 FIREBIRD_SUBMODULE_LOCKS = ("libfq", "libtommath", "firebird-client")
+UUID_OSSP_SUBMODULE_LOCKS = ("ossp-uuid",)
 
 
 def _locks_for(built: str) -> list[str]:
@@ -105,6 +111,8 @@ def _locks_for(built: str) -> list[str]:
         names = [name]
         if name == "firebird_fdw":
             names.extend(FIREBIRD_SUBMODULE_LOCKS)
+        if name == "uuid-ossp":
+            names.extend(UUID_OSSP_SUBMODULE_LOCKS)
         for lock_name in names:
             spec = DEFAULT_SOURCE_LOCKS.get(lock_name)
             if spec and spec not in seen:
