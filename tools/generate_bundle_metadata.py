@@ -156,6 +156,33 @@ def parse_source_locks(specs: list[str] | None) -> dict[str, SourceLock]:
     return locks
 
 
+def parse_expected_versions(specs: list[str] | None) -> dict[str, str]:
+    """Parse NAME=VERSION expectations for the *installed* control files.
+
+    The recipe (pgbuild/Makefile) knows which version each pin ships. The
+    installed prefix only knows what an earlier build left there. Recording
+    both without comparing them is how a bundle ends up attesting 0.1.0's
+    source commit next to 0.0.1's control file; the mismatch has to fail the
+    build, not ship as metadata.
+    """
+    expected: dict[str, str] = {}
+    for spec in specs or []:
+        name, sep, version = spec.partition("=")
+        if not sep or not name.strip() or not version.strip():
+            raise ValueError(f"invalid --expected-version {spec!r}; expected NAME=VERSION")
+        name, version = name.strip(), version.strip()
+        previous = expected.get(name)
+        if previous is not None and previous != version:
+            raise ValueError(
+                f"conflicting --expected-version for {name}: {previous!r} vs {version!r}"
+            )
+        expected[name] = version
+    unknown = set(expected) - set(EXTENSIONS)
+    if unknown:
+        raise ValueError(f"unknown --expected-version names: {sorted(unknown)}")
+    return expected
+
+
 def lock_identity_fields(lock: SourceLock) -> tuple[str | None, str | None, str]:
     """Return (source_commit, source_sha256, source_ref) from one lock.
 
@@ -336,6 +363,7 @@ def generate(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError(f"requested components were neither built nor skipped: {sorted(unresolved)}")
 
     locks = parse_source_locks(getattr(args, "source_lock", None))
+    expected_versions = parse_expected_versions(getattr(args, "expected_version", None))
 
     suffix = "dylib" if args.host_os == "Darwin" else "so"
     records: dict[str, Any] = {}
@@ -384,6 +412,14 @@ def generate(args: argparse.Namespace) -> dict[str, Any]:
                     f"metadata says {name} was built, but {control} is missing"
                 )
             version = _default_version(extension_dir, stem)
+            expected = expected_versions.get(name)
+            if expected is not None and version != expected:
+                raise ValueError(
+                    f"{name} installs version {version!r}, but the recipe declares "
+                    f"{expected!r}: the installed bundle is stale relative to "
+                    f"pgbuild/Makefile. Rebuild it (make -C pgbuild all) instead of "
+                    f"re-attesting artifacts from an earlier pin."
+                )
             sql_paths = _installation_sql_paths(extension_dir, stem)
             source_submodules = _submodules_from_locks(source, locks, required=True)
         else:
@@ -615,6 +651,13 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--cargo-pgrx-version", required=True)
     result.add_argument("--tigerfs-version", default="v0.7.0")
     result.add_argument("--tigerfs-sha256", default="")
+    result.add_argument(
+        "--expected-version",
+        action="append",
+        default=[],
+        metavar="NAME=VERSION",
+        help="version the installed control file must attest; a mismatch fails the build",
+    )
     result.add_argument(
         "--source-lock",
         action="append",

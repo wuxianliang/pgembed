@@ -76,6 +76,11 @@ POSTGRES_MAJOR := 18
 POSTGRES_VERSION := 18.4
 POSTGRES_SRC_REF := REL_18_4
 POSTGRES_SOURCE_COMMIT := f5cc81719e6da4cbdb1f797c48b693e91018153a
+# Fetch the source as a tarball pinned by commit, not by branch: codeload serves
+# it over plain HTTPS at roughly 20x the throughput of the git smart-HTTP
+# protocol here, and a commit URL is immutable while REL_18_4 is a moving branch.
+POSTGRES_TARBALL_URL := https://codeload.github.com/postgres/postgres/tar.gz/$(POSTGRES_SOURCE_COMMIT)
+POSTGRES_TARBALL_SHA256 := a8d4d8fef536492eb71b59bd8a821d2a0410b1cb859bbac1bb9b42bb32fc2853
 POSTGRES_SRC := postgres-$(POSTGRES_SRC_REF)
 POSTGRES_BLD := postgres-build-$(POSTGRES_SRC_REF)
 POSTGRES_SOURCE_VERIFIED := $(POSTGRES_SRC)/.pgembed-source-verified
@@ -435,7 +440,7 @@ $(POSTGRES_BUNDLE_CONFIG_STAMP): FORCE
 	rm -rf "$(INSTALL_PREFIX)" $(NATIVE_BUILD_DIRS); \
 	mv -f "$$tmp" "$@"
 
-.PHONY: all postgres pgvector provsql uuid-ossp vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema pg_typesafe tigerfs stannum relativize bundle-metadata
+.PHONY: all postgres pgvector provsql uuid-ossp vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema pg_typesafe tigerfs stannum relativize bundle-metadata reattest
 all: postgres $(EXTENSIONS) relativize bundle-metadata
 postgres: $(INSTALL_PREFIX)/bin/postgres
 pgvector: postgres $(INSTALL_PREFIX)/lib/postgresql/vector.$(PG_DLSUFFIX)
@@ -475,9 +480,14 @@ endif
 
 $(POSTGRES_SOURCE_VERIFIED): $(POSTGRES_BUNDLE_CONFIG_STAMP)
 	@set -eu; \
+	tmpdir="$$(mktemp -d)"; \
+	trap 'rm -rf "$$tmpdir"' EXIT HUP INT TERM; \
+	curl --fail --location --show-error --proto '=https' --proto-redir '=https' --retry 3 \
+		-o "$$tmpdir/postgres.tar.gz" "$(POSTGRES_TARBALL_URL)"; \
+	printf '%s  %s\n' '$(POSTGRES_TARBALL_SHA256)' "$$tmpdir/postgres.tar.gz" | $(SHA256_CMD) -c -; \
 	rm -rf "$(POSTGRES_SRC)"; \
-	git clone --branch "$(POSTGRES_SRC_REF)" --single-branch https://github.com/postgres/postgres "$(POSTGRES_SRC)"; \
-	test "$$(git -C "$(POSTGRES_SRC)" rev-parse HEAD)" = "$(POSTGRES_SOURCE_COMMIT)"; \
+	mkdir -p "$(POSTGRES_SRC)"; \
+	tar -xzf "$$tmpdir/postgres.tar.gz" -C "$(POSTGRES_SRC)" --strip-components=1; \
 	test -f "$(POSTGRES_SRC)/configure"; \
 	touch "$@"
 
@@ -673,7 +683,7 @@ $(INSTALL_PREFIX)/lib/postgresql/timescaledb.$(PG_DLSUFFIX): $(POSTGRES_BUNDLE_C
 $(PG_CRON_SOURCE_VERIFIED): $(POSTGRES_BUNDLE_CONFIG_STAMP)
 	@set -eu; \
 	rm -rf "$(PG_CRON_DIR)"; \
-	git clone --branch "$(PG_CRON_TAG)" --single-branch "$(PG_CRON_REPO)" "$(PG_CRON_DIR)"; \
+	git clone --depth 1 --branch "$(PG_CRON_TAG)" --single-branch "$(PG_CRON_REPO)" "$(PG_CRON_DIR)"; \
 	test "$$(git -C "$(PG_CRON_DIR)" rev-parse HEAD)" = "$(PG_CRON_COMMIT)"; \
 	test -f "$(PG_CRON_DIR)/Makefile"; \
 	touch "$@"
@@ -684,7 +694,7 @@ $(INSTALL_PREFIX)/lib/postgresql/pg_cron.$(PG_DLSUFFIX): $(POSTGRES_BUNDLE_CONFI
 $(PG_NET_SOURCE_VERIFIED): $(POSTGRES_BUNDLE_CONFIG_STAMP)
 	@set -eu; \
 	rm -rf "$(PG_NET_DIR)"; \
-	git clone --branch "$(PG_NET_TAG)" --single-branch "$(PG_NET_REPO)" "$(PG_NET_DIR)"; \
+	git clone --depth 1 --branch "$(PG_NET_TAG)" --single-branch "$(PG_NET_REPO)" "$(PG_NET_DIR)"; \
 	test "$$(git -C "$(PG_NET_DIR)" rev-parse HEAD)" = "$(PG_NET_COMMIT)"; \
 	test -f "$(PG_NET_DIR)/Makefile"; \
 	touch "$@"
@@ -858,10 +868,8 @@ $(INSTALL_PREFIX)/lib/postgresql/pg_jsonschema.$(PG_DLSUFFIX): $(POSTGRES_BUNDLE
 ifeq ($(RUST_EXTENSIONS_SUPPORTED),1)
 	@set -eu; \
 	export PATH="$$HOME/.cargo/bin:$$PATH" RUSTUP_TOOLCHAIN="$(RUST_TOOLCHAIN)"; \
-	if ! "$(PG_JSONSCHEMA_PGRX_ROOT)/bin/cargo-pgrx" --version 2>/dev/null | grep -q '$(PG_JSONSCHEMA_PGRX_VERSION)'; then \
-		cargo install cargo-pgrx --version "$(PG_JSONSCHEMA_PGRX_VERSION)" --locked --root "$(PG_JSONSCHEMA_PGRX_ROOT)"; \
-	fi; \
-	export PATH="$(abspath $(PG_JSONSCHEMA_PGRX_ROOT))/bin:$$PATH" PGRX_HOME="$(abspath $(PG_JSONSCHEMA_PGRX_HOME))"; \
+	pgrx_bin="$$(sh '$(abspath scripts/ensure-cargo-pgrx.sh)' '$(PG_JSONSCHEMA_PGRX_VERSION)' '$(abspath $(PG_JSONSCHEMA_PGRX_ROOT))')"; \
+	export PATH="$$pgrx_bin:$$PATH" PGRX_HOME="$(abspath $(PG_JSONSCHEMA_PGRX_HOME))"; \
 	unset MAKELEVEL MAKEFLAGS MFLAGS; \
 	cargo pgrx init --pg18="$(INSTALL_PREFIX)/bin/pg_config"; \
 	cd "$(PG_JSONSCHEMA_DIR)" && cargo pgrx install --release --no-default-features --features pg18 --pg-config "$(INSTALL_PREFIX)/bin/pg_config"
@@ -907,10 +915,8 @@ $(INSTALL_PREFIX)/lib/postgresql/stannum.$(PG_DLSUFFIX): $(POSTGRES_BUNDLE_CONFI
 ifeq ($(RUST_EXTENSIONS_SUPPORTED),1)
 	@set -eu; \
 	export PATH="$$HOME/.cargo/bin:$$PATH" RUSTUP_TOOLCHAIN="$(RUST_TOOLCHAIN)"; \
-	if ! "$(STANNUM_PGRX_ROOT)/bin/cargo-pgrx" --version 2>/dev/null | grep -q '$(STANNUM_PGRX_VERSION)'; then \
-		cargo install cargo-pgrx --version "$(STANNUM_PGRX_VERSION)" --locked --root "$(STANNUM_PGRX_ROOT)"; \
-	fi; \
-	export PATH="$(abspath $(STANNUM_PGRX_ROOT))/bin:$$PATH" PGRX_HOME="$(abspath $(STANNUM_PGRX_HOME))"; \
+	pgrx_bin="$$(sh '$(abspath scripts/ensure-cargo-pgrx.sh)' '$(STANNUM_PGRX_VERSION)' '$(abspath $(STANNUM_PGRX_ROOT))')"; \
+	export PATH="$$pgrx_bin:$$PATH" PGRX_HOME="$(abspath $(STANNUM_PGRX_HOME))"; \
 	unset MAKELEVEL MAKEFLAGS MFLAGS; \
 	cargo pgrx init --pg18="$(INSTALL_PREFIX)/bin/pg_config"; \
 	cd "$(STANNUM_DIR)/postgres" && cargo pgrx install --release --no-default-features --features pg18 --pg-config "$(INSTALL_PREFIX)/bin/pg_config"
@@ -946,6 +952,13 @@ relativize: postgres $(EXTENSIONS)
 	bash ../tools/relativize_native_install.sh $(INSTALL_PREFIX)
 
 bundle-metadata: postgres $(EXTENSIONS) relativize
+	$(MAKE) reattest
+
+# Re-attest the payload that is already installed: regenerate build-metadata.json
+# and the completion marker without touching (or rebuilding) any of the binaries.
+# Use this after replacing an artifact in the prefix; run `bundle-metadata` when
+# the extension set itself changed.
+reattest:
 	rm -f "$(BUNDLE_COMPLETION_MARKER)" "$(INSTALL_PREFIX)/share/pgembed/build-metadata.json"
 	# The stamp travels inside the payload: cibuildwheel copies (not mounts)
 	# the project into its build containers, so anything left outside the
@@ -992,6 +1005,8 @@ bundle-metadata: postgres $(EXTENSIONS) relativize
 		--source-lock "pg_jsonschema=commit:$(PG_JSONSCHEMA_COMMIT)" \
 		--source-lock "pg_typesafe=commit:$(PG_TYPESAFE_COMMIT)" \
 		--source-lock "stannum=commit:$(STANNUM_COMMIT)" \
+		--expected-version "pg_typesafe=$(PG_TYPESAFE_VERSION)" \
+		--expected-version "stannum=$(STANNUM_VERSION)" \
 		--source-lock "tigerfs=sha256:$(TIGERFS_EXPECTED_SHA256):$(TIGERFS_TAG)"
 	@mkdir -p "$$(dirname "$(BUNDLE_COMPLETION_MARKER)")"; tmp="$(BUNDLE_COMPLETION_MARKER).tmp.$$$$"; trap 'rm -f "$$tmp"' EXIT HUP INT TERM; printf '%s\n' 'schema=1' 'postgres=$(POSTGRES_VERSION)' 'metadata=build-metadata.json' > "$$tmp"; mv -f "$$tmp" "$(BUNDLE_COMPLETION_MARKER)"
 

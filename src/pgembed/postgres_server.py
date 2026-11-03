@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable, Optional, Dict, Union
+from typing import Iterable, Mapping, Optional, Dict, Union
 import atexit
 import logging
 import os
@@ -21,6 +21,7 @@ from .errors import (
     PostgresDataDirectoryVersionError,
     PostgresStartupError,
     PostgresStartupTimeoutError,
+    PreloadRequiredError,
 )
 from .utils import DiskList, PostmasterInfo, find_suitable_port, find_suitable_socket_dir
 
@@ -146,6 +147,24 @@ def _extension_sql_name(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
+def _conf_literal(value: str) -> str:
+    """Render a value as a postgresql.conf single-quoted literal."""
+    text = str(value).replace("\\", "\\\\").replace("'", "''")
+    return f"'{text}'"
+
+
+def default_pgdata() -> Path:
+    """Return the per-user PGDATA path used when no explicit path is given.
+
+    The directory is not created here; :func:`get_server` creates its parent on
+    demand. It follows the platform convention (``platformdirs``), so macOS and
+    Linux do not share a database by accident.
+    """
+    import platformdirs
+
+    return Path(platformdirs.user_data_dir("pgembed", appauthor=False)) / "pgdata"
+
+
 class PostgresServer:
     """A process-safe handle for one embedded PostgreSQL data directory."""
 
@@ -164,6 +183,7 @@ class PostgresServer:
         *,
         cleanup_mode: Optional[str] = "stop",
         shared_preload_libraries: Optional[Union[str, Iterable[str]]] = None,
+        settings: Optional[Mapping[str, str]] = None,
     ):
         if cleanup_mode not in (None, "stop", "delete"):
             raise ValueError("cleanup_mode must be None, 'stop', or 'delete'")
@@ -178,6 +198,7 @@ class PostgresServer:
         self.postgres_user = "postgres"
         self.cleanup_mode = cleanup_mode
         self.shared_preload_libraries = self._normalize_preload_libraries(shared_preload_libraries)
+        self.settings = dict(settings or {})
         self._postmaster_info: Optional[PostmasterInfo] = None
         self._count = 0
         self._cleanup_complete = False
@@ -202,6 +223,7 @@ class PostgresServer:
                     self._prepare_mutable_runtime(fresh=fresh)
                     self.ensure_pgdata_inited(fresh=fresh)
                     self.ensure_shared_preload_libraries()
+                    self.ensure_settings()
                     self.ensure_postgres_running()
                     self.global_process_id_list = DiskList(self.pgdata / ".handle_pids.json")
                     self.global_process_id_list.get_and_add(os.getpid())
@@ -301,6 +323,37 @@ class PostgresServer:
             lines.append(preload_line)
         else:
             lines[setting_idx] = preload_line
+        conf_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    def ensure_settings(self) -> None:
+        """Write caller-supplied GUCs into postgresql.conf before start.
+
+        Extensions such as ``typesafe`` take their provider endpoint and model
+        from GUCs, so a "just works" default has to be in the config file at
+        start time. Only the keys the caller passed are written, and an existing
+        uncommented assignment is replaced rather than duplicated, so repeated
+        starts stay idempotent. Secrets must go through the environment (for
+        example ``TYPESAFE_API_KEY``), never through this file.
+        """
+        if not self.settings:
+            return
+        conf_file = self.pgdata / "postgresql.conf"
+        lines = conf_file.read_text(encoding="utf-8").splitlines()
+        for name, value in self.settings.items():
+            if not name or not all(part.isidentifier() for part in name.split(".")):
+                raise ValueError(f"invalid PostgreSQL setting name: {name!r}")
+            rendered = f"{name} = {_conf_literal(value)}"
+            replaced = False
+            for index, line in enumerate(lines):
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#") or "=" not in stripped:
+                    continue
+                if stripped.split("=", 1)[0].strip() == name:
+                    lines[index] = rendered
+                    replaced = True
+                    break
+            if not replaced:
+                lines.append(rendered)
         conf_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     def ensure_pgdata_inited(self, *, fresh: bool) -> None:
@@ -514,31 +567,41 @@ class PostgresServer:
             input=command.encode(),
         ).decode("utf-8")
 
+    def _psql_scalar(self, sql: str) -> str:
+        """Run one statement and return its single unaligned, unheaded value."""
+        executable = POSTGRES_BIN_PATH / "psql"
+        return subprocess.check_output(
+            [
+                str(executable),
+                "--no-psqlrc",
+                "--no-align",
+                "--tuples-only",
+                "--set=ON_ERROR_STOP=1",
+                self.get_uri(),
+                "-c",
+                sql,
+            ]
+        ).decode("utf-8").strip()
+
+    def running_preload_libraries(self) -> frozenset[str]:
+        """Return the shared_preload_libraries the running postmaster loaded.
+
+        This reports the *running* setting, not the value written to
+        postgresql.conf, so a library added for the next start is not counted
+        until PostgreSQL actually restarts.
+        """
+        value = self._psql_scalar("SELECT current_setting('shared_preload_libraries')")
+        return frozenset(part.strip() for part in value.split(",") if part.strip())
+
     def create_extension(self, extension_name: str) -> str:
         import pgembed
         from pgembed import AVAILABLE_EXTENSIONS, get_extension_create_name
 
-        extension_map = {
-            "vector": "pgvector",
-            "vchord": "vectorchord",
-            "age": "age",
-            "psql_bm25s": "psql_bm25s",
-            "timescaledb": "timescaledb",
-            "pg_cron": "pg_cron",
-            "pg_net": "pg_net",
-            "http": "pgsql_http",
-            "plsh": "plsh",
-            "firebird_fdw": "firebird_fdw",
-            "pgmq": "pgmq",
-            "pg_partman": "pg_partman",
-            "pgtap": "pgtap",
-            "pg_jsonschema": "pg_jsonschema",
-            "pg_typesafe": "pg_typesafe",
-            "stannum": "stannum",
-            "uuid-ossp": "uuid-ossp",
-            "provsql": "provsql",
-        }
-        package_name = extension_map.get(extension_name, extension_name)
+        # Both spellings (``vector`` and ``pgvector``) resolve to the attested
+        # package name in one place; a second hand-written table here is what
+        # let "typesafe" silently skip attestation and fall through to a raw
+        # CREATE EXTENSION.
+        package_name = pgembed.resolve_extension_name(extension_name)
         if not pgembed.has_extension(package_name):
             if package_name not in pgembed.EXTENSION_NAMES:
                 create_name = get_extension_create_name(package_name)
@@ -551,6 +614,20 @@ class PostgresServer:
             raise RuntimeError(
                 f"Extension {extension_name!r} is not available. Available extensions: {available}"
             )
+        extension_metadata = pgembed.get_extension_metadata(package_name)
+        if (
+            extension_metadata is not None
+            and extension_metadata.requires_preload
+            and extension_metadata.preload_name
+        ):
+            running = self.running_preload_libraries()
+            if extension_metadata.preload_name not in running:
+                raise PreloadRequiredError(
+                    package_name,
+                    create_name=get_extension_create_name(package_name),
+                    preload_name=extension_metadata.preload_name,
+                    running_preload=tuple(sorted(running)),
+                )
         for predecessor in pgembed.EXTENSION_PRECEDENCE.get(package_name, ()):
             if pgembed.has_extension(predecessor):
                 self.psql(
@@ -610,13 +687,26 @@ class PostgresServer:
 
 
 def get_server(
-    pgdata: Union[Path, str],
+    pgdata: Optional[Union[Path, str]] = None,
     cleanup_mode: Optional[str] = "stop",
     shared_preload_libraries: Optional[Union[str, Iterable[str]]] = None,
+    settings: Optional[Mapping[str, str]] = None,
 ) -> PostgresServer:
-    """Return a handle after attesting the bundle and read-only inspecting PGDATA."""
+    """Return a handle after attesting the bundle and read-only inspecting PGDATA.
+
+    ``pgdata`` defaults to :func:`default_pgdata`; its parent is created on
+    demand so that ``pgembed.get_server()`` works on a fresh machine without
+    the caller choosing a data directory first. ``settings`` are written to
+    postgresql.conf before the postmaster starts; they are ignored when an
+    already-running handle for the same PGDATA is returned.
+    """
     metadata = validate_bundled_binaries(require_bundle_metadata())
-    path = Path(pgdata).expanduser().resolve()
+    if pgdata is None:
+        path = default_pgdata()
+        path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        path = Path(pgdata).expanduser()
+    path = path.resolve()
     if not path.parent.exists():
         raise FileNotFoundError(f"Parent directory of pgdata does not exist: {path.parent}")
     inspect_pgdata(path, metadata.postgres_major)
@@ -628,4 +718,5 @@ def get_server(
             path,
             cleanup_mode=cleanup_mode,
             shared_preload_libraries=shared_preload_libraries,
+            settings=settings,
         )

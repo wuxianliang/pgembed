@@ -47,6 +47,32 @@ class PostgresDataDirectoryVersionError(PostgresDataDirectoryInspectionError):
         )
 
 
+class PreloadRequiredError(PgEmbedError):
+    """An extension needs a library in shared_preload_libraries before CREATE EXTENSION."""
+
+    def __init__(
+        self,
+        extension_name: str,
+        *,
+        create_name: str,
+        preload_name: str,
+        running_preload: tuple[str, ...],
+    ):
+        self.extension_name = extension_name
+        self.create_name = create_name
+        self.preload_name = preload_name
+        self.running_preload = running_preload
+        active = ", ".join(running_preload) if running_preload else "(none)"
+        super().__init__(
+            f"Extension {create_name!r} requires the {preload_name!r} library in "
+            f"shared_preload_libraries, but the running server loads only: {active}. "
+            f"PostgreSQL cannot run CREATE EXTENSION {create_name} until it restarts "
+            f"with that library. Either call pgembed.bootstrap(profile='base') for a "
+            f"preload-configured base, or pass "
+            f"shared_preload_libraries=[{preload_name!r}] when creating the server."
+        )
+
+
 class PostgresStartupError(PgEmbedError):
     """PostgreSQL failed to reach ready state."""
 

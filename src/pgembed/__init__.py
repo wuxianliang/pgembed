@@ -24,6 +24,7 @@ from .errors import (
     PostgresDataDirectoryVersionError,
     PostgresStartupError,
     PostgresStartupTimeoutError,
+    PreloadRequiredError,
 )
 
 _logger = logging.getLogger("pgembed")
@@ -240,6 +241,13 @@ def list_extensions() -> dict[str, bool]:
     return AVAILABLE_EXTENSIONS.copy()
 
 
+def get_extension_metadata(name: str) -> Optional[ExtensionMetadata]:
+    """Return the attested metadata for a bundled extension, or None."""
+    if _BUNDLE_METADATA is None:
+        return None
+    return _BUNDLE_METADATA.extensions.get(name)
+
+
 def get_extension_create_name(name: str) -> str:
     if _BUNDLE_METADATA is not None:
         extension = _BUNDLE_METADATA.extensions.get(name)
@@ -267,6 +275,20 @@ def get_extension_create_name(name: str) -> str:
     }.get(name, name)
 
 
+def resolve_extension_name(name: str) -> str:
+    """Map a CREATE EXTENSION name (``vector``) to its bundle package name (``pgvector``).
+
+    Both spellings are accepted everywhere a caller names an extension; this is
+    the single place that decides which one the bundle metadata keys on.
+    """
+    if name in EXTENSION_NAMES:
+        return name
+    for package in EXTENSION_NAMES:
+        if get_extension_create_name(package) == name:
+            return package
+    return name
+
+
 def get_extension_path(name: str) -> Optional[Path]:
     """Return the attested extension library path without implying availability by existence alone."""
     return _EXTENSION_PATHS.get(name)
@@ -275,4 +297,11 @@ def get_extension_path(name: str) -> Optional[Path]:
 _detect_extensions()
 
 # Imported last to avoid a circular import while postgres_server imports package metadata.
-from .postgres_server import PostgresServer, get_server
+from .postgres_server import PostgresServer, default_pgdata, get_server
+from .base import (
+    BASE_PROFILE,
+    PROFILES,
+    BootstrapReport,
+    ExtensionProfile,
+    bootstrap,
+)

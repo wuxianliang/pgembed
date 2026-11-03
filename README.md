@@ -50,13 +50,34 @@ Think of it like SQLite, but with the power of PostgreSQL. Just `pip install pge
 ```python
 import pgembed
 
-# Initialize and start the server
-pgembed.get_server("/path/to/my/data/dir")
-
-# Connect and use like any PostgreSQL database
-# ... your database code here
-# Look in examples/*.py for more complete examples that could be run via uv
+# Zero config: per-user PGDATA, required preloads applied, base extensions created.
+with pgembed.bootstrap() as db:
+    db.psql("SELECT extversion FROM pg_extension WHERE extname = 'typesafe';")
 ```
+
+`bootstrap()` resolves `pgembed.default_pgdata()`, applies the profile's
+`shared_preload_libraries` *before* the first start, and creates the profile's
+extensions. It returns a normal `pgembed.PostgresServer`; `db.bootstrap_report`
+records what was created, skipped (not in this wheel), or failed, and
+`bootstrap(strict=True)` raises instead of recording a failure.
+
+The `base` profile creates `vector`, `vchord`, `stannum`, `typesafe`, `pgmq`,
+`pg_jsonschema`, `ltree`, `pg_trgm`, and `pgcrypto`, and preloads `vchord` and
+`pg_stat_statements`. Order matters: PostgreSQL refuses `CREATE EXTENSION vchord`
+unless the postmaster already loaded `vchord`, so the preload has to be in place
+at start time and cannot be added afterwards.
+
+```python
+# Prefer to drive it yourself.
+server = pgembed.get_server("/path/to/my/data/dir")
+server.create_extension("vector")
+server.create_extension("vchord")  # raises PreloadRequiredError without the preload
+```
+
+`get_server()` also defaults to `pgembed.default_pgdata()` when called with no
+argument, so `pgembed.get_server()` works on a fresh machine. Extensions that
+need a preload report `PreloadRequiredError` with the library name instead of
+surfacing a raw `psql` failure.
 
 PostgreSQL binaries are available at `pgembed.POSTGRES_BIN_PATH` if you need direct access to tools like `initdb`, `pg_ctl`, `psql`, or `pg_config`. The installed wheel also exposes `pgembed.BUNDLED_PG_MAJOR` and `pgembed.BUNDLED_POSTGRES_VERSION`; PG18 wheels report `18` and `"18.4"`. In an unbuilt editable checkout those constants are `None`, extension availability is fail-closed, and the first `get_server()` explains that bundle metadata is unavailable.
 
@@ -170,7 +191,7 @@ pgembed bundles a curated set of PostgreSQL extensions, built specifically for P
 | [pg_partman](https://github.com/pgpartman/pg_partman) | `pg_partman` | `pg_partman` | — | SQL-only partition manager (background worker not bundled; use `pg_cron` for maintenance) |
 | [pgTAP](https://pgtap.org/) | `pgtap` | `pgtap` | — | SQL-only TAP test framework |
 | [pg_jsonschema](https://github.com/supabase/pg_jsonschema) | `pg_jsonschema` | `pg_jsonschema` | — | JSON Schema validation (Rust/pgrx) |
-| [pg_typesafe](https://github.com/giuliosmall/pg_typesafe) | `typesafe` | `pg_typesafe` | — | **0.1.0**: `typesafe_*` classifiers plus native `jev_*` row predicates (pg-jev 0.2.0). TypeSafe key or OpenRouter Decisions API. `\dx` comment: *TypeSafe AI client and native Jev row predicates*. Requires libcurl. |
+| [pg_typesafe](https://github.com/giuliosmall/pg_typesafe) | `typesafe` | `pg_typesafe` | — | **0.1.0**: `typesafe_*` classifiers plus native `jev_*` row predicates (pg-jev 0.2.0). `bootstrap()` defaults the native family to api.tu-zi.com/jev-1.14; TypeSafe or OpenRouter also work via GUCs. `\dx` comment: *TypeSafe AI client and native Jev row predicates*. Requires libcurl. |
 | [stannum](https://github.com/wuxianliang/stannum) | `stannum` | `stannum` | — | BM25 search engine with TINQL Boolean/phrase queries, highlighting, and exact counts under concurrent writes (Rust/pgrx; development software; our fork of TeamSpringbird/stannum with the `jieba` tokenizer) |
 | [uuid-ossp](https://www.postgresql.org/docs/18/uuid-ossp.html) | `uuid-ossp` | `uuid-ossp` | — | PostgreSQL contrib UUID generators; required by ProvSQL (OSSP UUID linked statically) |
 | [ProvSQL](https://github.com/PierreSenellart/provsql) | `provsql` | `provsql` | `provsql` | semiring provenance: `why`/`how`/`where`, probabilities, Shapley/Banzhaf; uses `uuid-ossp` |
@@ -312,7 +333,7 @@ server.psql("SELECT pgtap_version();")
 
 ### Using pg_typesafe
 
-This tree's bundled prefix (`src/pgembed/pginstall`) installs **pg_typesafe 0.1.0** from the local sibling checkout (`source_ref=local-overlay:typesafe`). `CREATE EXTENSION typesafe` exposes two families:
+This tree's bundled prefix (`src/pgembed/pginstall`) installs **pg_typesafe 0.1.0**, built from the pinned source (`source_ref=11d9358`), not from a local overlay. `CREATE EXTENSION typesafe` exposes two families:
 
 | Family | Surface | Typical use |
 |---|---|---|
@@ -323,18 +344,23 @@ This tree's bundled prefix (`src/pgembed/pginstall`) installs **pg_typesafe 0.1.
 
 `typesafe_*` reads `typesafe.api_key` / `typesafe.api_key_file` or the postmaster's `TYPESAFE_API_KEY`. Native `jev_*` live calls resolve `jev.api_key` (non-empty) then `TYPESAFE_API_KEY`; they do **not** read `typesafe.api_key`. Other useful GUCs: `typesafe.endpoint`, `typesafe.model`, `typesafe.timeout_ms`, `typesafe.batch_size`, `typesafe.http_concurrency`; `jev.api_url`, `jev.model`, `jev.threshold`, `jev.batch_size`, `jev.concurrency`. `jev.api_key` / `jev.api_url` are superuser-set.
 
+`pgembed.bootstrap()` already points the native family at a working provider: it writes `jev.api_url = 'https://api.tu-zi.com/v1/systemone'` and `jev.model = 'jev-1.14'` into `postgresql.conf` before the postmaster starts, and accepts the token from `TYPESAFE_API_KEY` or `TUZI_API_KEY`. Override per call with `bootstrap(settings={"jev.model": "jev-1.13"})`; plain `get_server()` writes nothing, so the extension defaults apply. The key is only ever read from the environment — nothing secret is written to `postgresql.conf`.
+
 Without a key, `typesafe.mock_response` (superuser-only) short-circuits the **`typesafe_*` HTTP path**. Native `jev_*` offline tests need the loopback mock in the `pg_typesafe` repo (`test/jev/mock_api.py`), not this GUC.
 
 ```python
 import os
 
-os.environ.setdefault("TYPESAFE_API_KEY", "...")  # inherited by the server process
+os.environ.setdefault("TUZI_API_KEY", "...")  # inherited by the server process
 
-with pgembed.get_server("/path/to/my/data/dir") as server:
-    server.create_extension("pg_typesafe")
+with pgembed.bootstrap("/path/to/my/data/dir") as server:
     print(server.psql("SELECT extversion FROM pg_extension WHERE extname = 'typesafe';"))
     print(server.psql("SELECT jev_version();"))
-    # Real typesafe_* calls need the API key above; mock mode needs no key and no network:
+    server.psql("CREATE TABLE city(name text, country text)")
+    server.psql("INSERT INTO city VALUES ('Paris', 'Germany')")
+    # Real call: jev_prob is 0.97 for this row against api.tu-zi.com/jev-1.14.
+    print(server.psql("SELECT jev_prob(city, 'the country is Germany') FROM city;"))
+    # Mock mode needs no key and no network (typesafe_* family only):
     server.psql("""
 SET typesafe.mock_response = $${
   "model": "jev-latest",
@@ -355,8 +381,8 @@ SELECT * FROM typesafe_classify(
 Native predicates (live key or Jev mock server — not `typesafe.mock_response`):
 
 ```sql
-SET jev.api_key = 'tsk_...';          -- superuser
-SET jev.api_url = 'https://api.typesafe.ai/v1/systemone';
+SET jev.api_key = 'tsk_...';          -- superuser, or TYPESAFE_API_KEY in the environment
+SET jev.api_url = 'https://api.tu-zi.com/v1/systemone';  -- bootstrap() default
 SELECT name FROM cities WHERE jev(cities, 'the country is Germany');
 SELECT name, jev_prob(cities, 'the country is Germany') AS p FROM cities;
 SELECT jev_choice(cities, 'which continent?', ARRAY['europe','asia','americas']) FROM cities;
@@ -364,7 +390,12 @@ SELECT jev_choice(cities, 'which continent?', ARRAY['europe','asia','americas'])
 
 A runnable mock walkthrough is `examples/typesafe_jev.py`. See the [pg_typesafe README](https://github.com/giuliosmall/pg_typesafe) (and this workspace's local `pg_typesafe` tree) for `_many` batch variants, `typesafe_last_request()`, `jev_eval` / `jev_stats`, and resource GUCs. Existing databases on **0.0.1** can `ALTER EXTENSION typesafe UPDATE;` to 0.1.0.
 
-The wheel *recipe* in `pgbuild/Makefile` still pins upstream commit `93a5acb` (catalog `0.0.1`) plus `pgbuild/patches/pg_typesafe-pg18-noreturn.patch` for a clean rebuild. A local `make pg_typesafe` follows that pin and would replace this overlay. Refresh the 0.1.0 prefix with `pg_typesafe/scripts/install-into-pgembed.sh` (do not change the bundle stamp).
+The wheel recipe pins upstream `11d9358` (catalog `0.1.0`) and no longer applies
+`patches/pg_typesafe-pg18-noreturn.patch`. `tools/generate_bundle_metadata.py
+--expected-version pg_typesafe=0.1.0` makes attestation fail loudly when the
+installed payload came from an older pin, instead of stamping it with a pin it
+does not match; `make -C pgbuild reattest` re-runs attestation against the
+current prefix without rebuilding anything.
 
 #### Using OpenRouter instead of a TypeSafe account
 
@@ -463,6 +494,34 @@ with pgembed.get_server(
 ```
 
 ### Building specific extensions
+
+All source fetches are pinned and shallow: the PostgreSQL tree is a checksummed
+tarball at a fixed commit (`POSTGRES_TARBALL_URL` / `POSTGRES_TARBALL_SHA256`),
+and every extension clone uses `--depth 1` or `fetch --depth 1`. That matters on
+a slow link — git smart-HTTP measured ~80 KB/s here while the same 30 MB over
+codeload HTTPS took 14 s, so the tarball is roughly 40x faster than
+`git clone --single-branch`.
+
+A full rebuild is still a PostgreSQL compile plus four Rust extensions;
+re-downloading is the only part the network can ruin. Two knobs if you need to
+change the transport:
+
+```bash
+# crates.io: use a reachable mirror (static.crates.io measured ~11 KB/s here,
+# rsproxy ~400 KB/s). Checksums are unchanged, existing caches still work.
+cat >> ~/.cargo/config.toml <<'EOF'
+[source.crates-io]
+replace-with = "rsproxy-sparse"
+[source.rsproxy-sparse]
+registry = "sparse+https://rsproxy.cn/index/"
+EOF
+
+# git: route every github.com fetch through a mirror, no Makefile edit needed.
+git config --global url."https://<mirror>/".insteadOf "https://github.com/"
+```
+
+`insteadOf` does **not** cover the tarball downloads (`curl`), which need
+`https_proxy` or an edited `*_URL` rather than a git rewrite.
 
 To build only specific extensions:
 

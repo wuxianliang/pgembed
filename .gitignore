@@ -139,6 +139,8 @@ pgbuild/*
 !pgbuild/Makefile
 !pgbuild/patches/
 !pgbuild/patches/*.patch
+!pgbuild/scripts/
+!pgbuild/scripts/*
 src/pgembed/pginstall
 
 # macOS / stray tooling artifacts (never commit)
