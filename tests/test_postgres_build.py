@@ -261,31 +261,33 @@ def test_all_git_sources_use_verification_markers() -> None:
 
 
 def test_failed_source_verification_is_retried(tmp_path: Path) -> None:
+    checksum_command = "shasum" if platform.system() == "Darwin" else "sha256sum"
+    if shutil.which(checksum_command) is None:
+        pytest.skip(f"{checksum_command} is unavailable")
     fake_bin = tmp_path / "fake-bin"
     fake_bin.mkdir()
-    clone_count = tmp_path / "clone-count"
-    clone_count.write_text("0\n")
-    fake_git = fake_bin / "git"
-    fake_git.write_text(
+    download_count = tmp_path / "download-count"
+    download_count.write_text("0\n")
+    # PostgreSQL is fetched as a checksummed tarball, not cloned. A fake curl
+    # serves bytes that cannot match POSTGRES_TARBALL_SHA256, so every attempt
+    # fails at the checksum, before the source tree is replaced or verified.
+    fake_curl = fake_bin / "curl"
+    fake_curl.write_text(
         "#!/bin/sh\n"
         "set -eu\n"
-        "if [ \"$1\" = clone ]; then\n"
-        "  for destination; do :; done\n"
-        "  mkdir -p \"$destination\"\n"
-        "  printf '%s\\n' '#!/bin/sh' > \"$destination/configure\"\n"
-        "  count=$(cat \"$FAKE_GIT_COUNT\")\n"
-        "  printf '%s\\n' \"$((count + 1))\" > \"$FAKE_GIT_COUNT\"\n"
-        "elif [ \"$1\" = -C ] && [ \"$3\" = rev-parse ]; then\n"
-        "  printf '%s\\n' \"$FAKE_GIT_COMMIT\"\n"
-        "else\n"
-        "  exit 2\n"
-        "fi\n"
+        "output=\n"
+        "while [ \"$#\" -gt 0 ]; do\n"
+        "  if [ \"$1\" = -o ]; then output=$2; shift 2; else shift; fi\n"
+        "done\n"
+        "test -n \"$output\"\n"
+        "printf '%s\\n' corrupt > \"$output\"\n"
+        "count=$(cat \"$FAKE_CURL_COUNT\")\n"
+        "printf '%s\\n' \"$((count + 1))\" > \"$FAKE_CURL_COUNT\"\n"
     )
-    fake_git.chmod(0o755)
+    fake_curl.chmod(0o755)
     env = os.environ.copy()
     env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
-    env["FAKE_GIT_COUNT"] = str(clone_count)
-    env["FAKE_GIT_COMMIT"] = "wrong-commit"
+    env["FAKE_CURL_COUNT"] = str(download_count)
     marker = Path("postgres-source") / ".pgembed-source-verified"
     command = [
         shutil.which("make") or "make",
@@ -293,7 +295,6 @@ def test_failed_source_verification_is_retried(tmp_path: Path) -> None:
         f"INSTALL_PREFIX={tmp_path / 'prefix'}",
         f"POSTGRES_BUNDLE_CONFIG_STAMP={tmp_path / 'bundle.stamp'}",
         "POSTGRES_SRC=postgres-source",
-        "POSTGRES_SOURCE_COMMIT=expected-commit",
         "EXTENSIONS=",
         f"HOST_OS={'Darwin' if platform.system() == 'Darwin' else 'Linux'}",
     ]
@@ -303,8 +304,11 @@ def test_failed_source_verification_is_retried(tmp_path: Path) -> None:
 
     assert first.returncode != 0
     assert second.returncode != 0
-    assert clone_count.read_text().strip() == "2"
+    # No marker means the next invocation retries instead of trusting a source
+    # tree that was never verified.
+    assert download_count.read_text().strip() == "2"
     assert not (tmp_path / marker).exists()
+    assert not (tmp_path / "postgres-source").exists()
 
 
 def test_failed_archive_checksum_never_publishes_final_archive(tmp_path: Path) -> None:
