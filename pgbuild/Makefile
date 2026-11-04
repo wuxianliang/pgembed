@@ -558,12 +558,16 @@ $(OSSP_UUID_DIR)/configure: $(OSSP_UUID_DIR).tar.gz
 	tar xzf "$(OSSP_UUID_DIR).tar.gz" -C "$(OSSP_UUID_DIR)" --strip-components=1
 	touch $@
 
+# -fPIC: the static archive is linked into a shared object (uuid-ossp.so).
+# Without it x86_64 ld rejects the archive with "relocation R_X86_64_32
+# against .rodata.str1.8 can not be used when making a shared object";
+# aarch64 happens to tolerate the non-PIC objects, x86_64 does not.
 $(OSSP_UUID_INSTALLED): $(OSSP_UUID_DIR)/configure
 	cd "$(OSSP_UUID_DIR)" && ./configure \
 		--prefix="$(OSSP_UUID_PREFIX)" \
 		--includedir="$(OSSP_UUID_PREFIX)/include/ossp" \
 		$(OSSP_UUID_BUILD_ARGS) \
-		CFLAGS="-O2 -fcommon -Wno-implicit-function-declaration"
+		CFLAGS="-O2 -fcommon -fPIC -Wno-implicit-function-declaration"
 	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C "$(OSSP_UUID_DIR)" -j$(BUILD_JOBS)
 	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C "$(OSSP_UUID_DIR)" install
 	touch $@

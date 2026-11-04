@@ -134,7 +134,9 @@ jobs:
           rustup default "$RUST_TOOLCHAIN"
       - name: Install build tools (macOS)
         if: matrix.os == 'macos-latest'
-        run: brew install ccache jq openssl cmake ninja icu4c@78 curl bison
+        # boost is needed by the host pre-build as well: provsql links
+        # boost_serialization and CIBW_BEFORE_ALL_MACOS runs only after this.
+        run: brew install ccache jq openssl cmake ninja icu4c@78 curl bison boost
       - name: Assert system GNU Make 3.81 (macOS)
         if: matrix.os == 'macos-latest'
         run: make --version | grep -q '^GNU Make 3\.81$'
