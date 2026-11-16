@@ -87,6 +87,8 @@ DEFAULT_SOURCE_LOCKS = {
     "pgmq": "pgmq=sha256:e6bdbb2311a3bbf34439871a99ee1e5e87c79fdca2b1e6784411a51b079314d1:v1.12.0",
     "pg_partman": "pg_partman=sha256:a3f100ae871677f0012579f58542c174900297f664a4ad2be0256e7ee5e33502:v5.5.0",
     "pgtap": "pgtap=sha256:d2c951afb296a001d21785611a8e966e3f8fa3f5bfbd929396a5130c0152f314:v1.3.4",
+    "gnomon": f"gnomon=commit:{_MAKEFILE_PINS['GNOMON_COMMIT']}",
+    "gnomon_c": f"gnomon_c=commit:{_MAKEFILE_PINS['GNOMON_COMMIT']}",
     "pg_jsonschema": "pg_jsonschema=commit:d08e4dea14549858b54791d6da4f606dc58a512e",
     "pg_typesafe": f"pg_typesafe=commit:{_MAKEFILE_PINS['PG_TYPESAFE_COMMIT']}",
     # Derived, not literal: a pin recorded here in duplicate once drifted from the
@@ -206,6 +208,12 @@ def test_schema_v1_metadata_loads(tmp_path: Path) -> None:
     assert metadata.extensions["pg_partman"].built is False
     assert metadata.extensions["pgtap"].has_library is False
     assert metadata.extensions["pgtap"].built is False
+    assert metadata.extensions["gnomon"].has_library is False
+    assert metadata.extensions["gnomon"].built is False
+    assert metadata.extensions["gnomon_c"].has_library is True
+    assert metadata.extensions["gnomon_c"].built is False
+    assert metadata.extensions["gnomon_c"].requires_preload is True
+    assert metadata.extensions["gnomon_c"].preload_name == "gnomon_c"
     assert metadata.extensions["pg_jsonschema"].has_library is True
     assert metadata.extensions["pg_jsonschema"].built is False
     assert metadata.extensions["pg_typesafe"].has_library is True
@@ -277,6 +285,48 @@ def test_generator_records_sql_only_pgmq(tmp_path: Path) -> None:
     assert extension.source_sha256 == (
         "e6bdbb2311a3bbf34439871a99ee1e5e87c79fdca2b1e6784411a51b079314d1"
     )
+
+
+def test_generator_records_gnomon_core_and_c_module(tmp_path: Path) -> None:
+    prefix = _prefix(tmp_path)
+    extension_dir = prefix / "share" / "postgresql" / "extension"
+    (extension_dir / "gnomon.control").write_text("default_version = '1.0.2'\n")
+    (extension_dir / "gnomon--1.0.2.sql").write_text("-- fixture\n")
+    (extension_dir / "gnomon_c.control").write_text("default_version = '1.0.2'\n")
+    (extension_dir / "gnomon_c--1.0.2.sql").write_text("-- fixture\n")
+    library = prefix / "lib" / "postgresql" / "gnomon_c.dylib"
+    library.write_bytes(b"fixture")
+
+    output = prefix / "bundle-metadata.json"
+    result = _generate(
+        prefix,
+        output,
+        requested="pgvector gnomon gnomon_c",
+        built="pgvector gnomon gnomon_c",
+    )
+    assert result.returncode == 0, result.stderr
+    metadata = load_bundle_metadata(output)
+    assert metadata is not None
+
+    gnomon = metadata.extensions["gnomon"]
+    assert gnomon.built is True
+    assert gnomon.library is None
+    assert gnomon.has_library is False
+    assert gnomon.requires_preload is False
+    assert gnomon.preload_name is None
+    assert gnomon.create_name == "gnomon"
+    assert gnomon.version == "1.0.2"
+    assert gnomon.source_commit == _MAKEFILE_PINS["GNOMON_COMMIT"]
+
+    gnomon_c = metadata.extensions["gnomon_c"]
+    assert gnomon_c.built is True
+    assert gnomon_c.library == "lib/postgresql/gnomon_c.dylib"
+    assert gnomon_c.has_library is True
+    assert gnomon_c.requires_preload is True
+    assert gnomon_c.preload_name == "gnomon_c"
+    assert gnomon_c.create_name == "gnomon_c"
+    assert gnomon_c.version == "1.0.2"
+    assert gnomon_c.source_commit == _MAKEFILE_PINS["GNOMON_COMMIT"]
 
 
 def test_native_built_extension_cannot_omit_library(tmp_path: Path) -> None:

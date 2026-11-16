@@ -43,6 +43,7 @@ Think of it like SQLite, but with the power of PostgreSQL. Just `pip install pge
 - **AI classification**: Includes [pg_typesafe](https://github.com/giuliosmall/pg_typesafe) **0.1.0** to call TypeSafe AI (Jev) from SQL. Keeps the `typesafe_*` text classifiers and adds native `jev_*` row predicates (pg-jev **0.2.0** API: `WHERE jev(tbl, '…')`, `jev_choice`, `jev_score`, …). Requires libcurl.
 - **Provenance & uncertainty**: Includes [ProvSQL](https://github.com/PierreSenellart/provsql) for semiring provenance (`why`/`how`/`where`), probabilities, and Shapley/Banzhaf attribution. Requires `shared_preload_libraries=["provsql"]`.
 - **Indexed search engine**: Includes [stannum](https://github.com/wuxianliang/stannum) (our fork of TeamSpringbird/stannum, a fork of PlanetScale Lead; carries the `jieba` word-level Chinese tokenizer) for BM25 search with Boolean/phrase/proximity TINQL queries, highlighting, and `stannum` access-method indexes (Rust/pgrx; development software)
+- **History & branches**: Includes [gnomon](https://github.com/bitsinfra/gnomon) for version history, time travel, branches, diff, three-way merges and undo inside PostgreSQL, plus its optional C module (`gnomon_c`) for statement routing, real row locks and a heartbeat worker
 - **PostgreSQL contrib**: `pg_stat_statements`, `pg_trgm`, `unaccent`, `pgcrypto`, `ltree`, `hstore`, and `postgres_fdw` are installed with the server so `CREATE EXTENSION` works without extra packages
 
 ## Quick start
@@ -190,6 +191,8 @@ pgembed bundles a curated set of PostgreSQL extensions, built specifically for P
 | [pgmq](https://github.com/pgmq/pgmq) | `pgmq` | `pgmq` | — | SQL-only message queue; partitioned queues use bundled [pg_partman](https://github.com/pgpartman/pg_partman) |
 | [pg_partman](https://github.com/pgpartman/pg_partman) | `pg_partman` | `pg_partman` | — | SQL-only partition manager (background worker not bundled; use `pg_cron` for maintenance) |
 | [pgTAP](https://pgtap.org/) | `pgtap` | `pgtap` | — | SQL-only TAP test framework |
+| [gnomon](https://github.com/bitsinfra/gnomon) | `gnomon` | `gnomon` | — | SQL-only core: version history, time travel, branches, diff, three-way merge and undo. Creates its own schema and `gnomon_*` roles per cluster; `CREATE EXTENSION` needs a superuser (the bundled server is one). |
+| [gnomon C module](https://github.com/bitsinfra/gnomon/blob/main/src/c/README.md) | `gnomon_c` | `gnomon_c` | `gnomon_c` | optional: statement routing (`SET gnomon.branch`), real row locks, point reads, and the heartbeat worker. `requires = 'gnomon'`. |
 | [pg_jsonschema](https://github.com/supabase/pg_jsonschema) | `pg_jsonschema` | `pg_jsonschema` | — | JSON Schema validation (Rust/pgrx) |
 | [pg_typesafe](https://github.com/giuliosmall/pg_typesafe) | `typesafe` | `pg_typesafe` | — | **0.1.0**: `typesafe_*` classifiers plus native `jev_*` row predicates (pg-jev 0.2.0). `bootstrap()` defaults the native family to api.tu-zi.com/jev-1.14; TypeSafe or OpenRouter also work via GUCs. `\dx` comment: *TypeSafe AI client and native Jev row predicates*. Requires libcurl. |
 | [stannum](https://github.com/wuxianliang/stannum) | `stannum` | `stannum` | — | BM25 search engine with TINQL Boolean/phrase queries, highlighting, and exact counts under concurrent writes (Rust/pgrx; development software; our fork of TeamSpringbird/stannum with the `jieba` tokenizer) |
@@ -207,7 +210,7 @@ import pgembed
 
 # Check which extensions are available
 print(pgembed.list_extensions())
-# {'pgvector': True, 'vectorchord': True, 'age': True, 'psql_bm25s': True, 'timescaledb': True, 'pg_cron': True, 'pg_net': True, 'pgsql_http': True, 'plsh': True, 'firebird_fdw': True, 'pgmq': True, 'pg_partman': True, 'pgtap': True, 'pg_jsonschema': True, 'pg_typesafe': True, 'stannum': True, 'uuid-ossp': True, 'provsql': True}
+# {'pgvector': True, 'vectorchord': True, 'age': True, 'psql_bm25s': True, 'timescaledb': True, 'pg_cron': True, 'pg_net': True, 'pgsql_http': True, 'plsh': True, 'firebird_fdw': True, 'pgmq': True, 'pg_partman': True, 'pgtap': True, 'gnomon': True, 'gnomon_c': True, 'pg_jsonschema': True, 'pg_typesafe': True, 'stannum': True, 'uuid-ossp': True, 'provsql': True}
 
 # Check if a specific extension is available, then create it
 if pgembed.has_extension('vectorchord'):
@@ -318,6 +321,52 @@ SELECT string_agg(tok, '/') FROM stannum.tokenize(
 ```
 
 `stannum` loads on demand on the primary (no `shared_preload_libraries` needed); reads on a hot standby require preloading it. It is development software, pinned to our fork's `main` by commit.
+
+### History, branches, and merges with gnomon
+
+`gnomon` makes tracked tables versioned data: a branch reads main and keeps only what it changes, so it opens without copying the database. `gnomon.diff()` shows every changed row and field, and `gnomon.merge()` is a three-way, type-aware merge that reports conflicts as rows. The SQL core needs no preload and supports `track`, `create_branch`, `use`, time travel, `diff`, `merge` and `undo_merge`.
+
+The optional C module adds cluster-wide statement routing (`SET gnomon.branch`), real `FOR UPDATE` locks, `INSERT ... ON CONFLICT`, point reads, and the heartbeat worker. Its hooks are installed at postmaster start, so preload it before the first start.
+
+The opt-in `gnomon` profile preloads the C module, creates both extensions, and points the heartbeat at the bootstrap database in one call:
+
+```python
+import pgembed
+
+server = pgembed.bootstrap(profile="gnomon")
+try:
+    server.psql("""
+    CREATE TABLE orders (
+        id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        status text,
+        amount numeric
+    );
+    INSERT INTO orders (status, amount) VALUES ('open', 10), ('paid', 20);
+    SELECT gnomon.track('orders');
+    SELECT gnomon.create_branch('agent/refunds');
+    SELECT gnomon.use('agent/refunds');
+    UPDATE orders SET status = 'refunded' WHERE id = 1;
+    """)
+    # gnomon.use() is session-scoped: the UPDATE above ran on the branch in
+    # that psql call. A fresh connection still reads main until the merge.
+    print(server.psql("SELECT * FROM gnomon.diff('agent/refunds');"))
+    print(server.psql("SELECT gnomon.merge('agent/refunds');"))
+finally:
+    server.cleanup()
+```
+
+To add it to an existing server instead, preload the C module at start and call `create_extension`; it walks `gnomon_c.control`'s `requires = 'gnomon'` dependency for you:
+
+```python
+server = pgembed.get_server(
+    "/path/to/pgdata",
+    shared_preload_libraries=["gnomon_c"],
+)
+server.create_extension("gnomon")     # SQL core; also works without preload
+server.create_extension("gnomon_c")   # optional C module
+```
+
+Without the preload, `create_extension("gnomon_c")` raises `PreloadRequiredError`; the SQL core still works on its own. The C module's heartbeat worker only runs for databases named in `gnomon.heartbeat_databases` (the `gnomon` profile sets it to `postgres`). The base profile does not include gnomon because preloading the C module installs cluster-wide planner and utility hooks even for servers that never track a table.
 
 ### JSON Schema and pgTAP
 
@@ -568,6 +617,9 @@ make pg_partman
 # Build only pgTAP
 make pgtap
 
+# Build only gnomon (SQL core + optional C module, both from one tree)
+make gnomon
+
 # Build only pg_jsonschema (Rust/pgrx)
 make pg_jsonschema
 
@@ -580,7 +632,7 @@ make pg_typesafe
 make stannum
 
 # Build specific combination
-make EXTENSIONS="pgvector vectorchord timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema pg_typesafe stannum uuid-ossp provsql" all
+make EXTENSIONS="pgvector vectorchord timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap gnomon gnomon_c pg_jsonschema pg_typesafe stannum uuid-ossp provsql" all
 ```
 
 ## History
@@ -589,4 +641,4 @@ pgembed is a fork of [pgserver](https://github.com/orm011/pgserver), which was i
 
 - Bundled Darwin/Linux releases for macOS arm64 and Linux x86_64/aarch64
 - Robust process management and cleanup
-- Built-in pgvector, VectorChord, Apache AGE, psql_bm25s, TimescaleDB, pg_cron, pg_net, firebird_fdw, pgmq, pg_partman, pgTAP, pg_jsonschema, pg_typesafe, stannum, uuid-ossp, and ProvSQL extensions
+- Built-in pgvector, VectorChord, Apache AGE, psql_bm25s, TimescaleDB, pg_cron, pg_net, firebird_fdw, pgmq, pg_partman, pgTAP, gnomon, pg_jsonschema, pg_typesafe, stannum, uuid-ossp, and ProvSQL extensions

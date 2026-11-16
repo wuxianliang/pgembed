@@ -143,6 +143,8 @@ def test_vectorchord_create_extension_names(monkeypatch, extension_name: str, ex
         return "CREATE EXTENSION\n"
 
     monkeypatch.setattr(pg, "psql", fake_psql)
+    # vchord is preload-gated; this unit test only asserts the SQL spelling.
+    monkeypatch.setattr(pg, "running_preload_libraries", lambda: frozenset({"vchord"}))
     assert pg.create_extension(extension_name).strip() == "CREATE EXTENSION"
     assert commands == [expected_sql]
 
@@ -158,6 +160,8 @@ def test_provsql_create_extension_quotes_its_dependency(monkeypatch):
         return "CREATE EXTENSION\n"
 
     monkeypatch.setattr(pg, "psql", fake_psql)
+    # provsql is preload-gated; this unit test only asserts dependency quoting.
+    monkeypatch.setattr(pg, "running_preload_libraries", lambda: frozenset({"provsql"}))
     assert pg.create_extension("provsql").strip() == "CREATE EXTENSION"
     assert commands == [
         'CREATE EXTENSION IF NOT EXISTS "uuid-ossp";',
@@ -638,6 +642,70 @@ FROM stannum_documents WHERE id = 1;
     assert "(1 row)" in segments
 
 
+def test_gnomon_core_works_without_preload(tmp_postgres):
+    _require_extension("gnomon")
+    assert tmp_postgres.create_extension("gnomon").strip() == "CREATE EXTENSION"
+    assert (
+        tmp_postgres._psql_scalar(
+            "SELECT extversion FROM pg_extension WHERE extname = 'gnomon';"
+        )
+        == "1.0.2"
+    )
+
+
+@pytest.fixture
+def tmp_postgres_gnomon():
+    _require_extension("gnomon")
+    tmp_pg_data = tempfile.mkdtemp()
+    with pgembed.get_server(
+        tmp_pg_data,
+        cleanup_mode="delete",
+        shared_preload_libraries="gnomon_c",
+        settings={"gnomon.heartbeat_databases": "postgres"},
+    ) as pg:
+        yield pg
+
+
+def test_gnomon(tmp_postgres_gnomon):
+    """The SQL core plus the preloaded C module: branch, diff, merge."""
+    _require_extension("gnomon")
+    _require_extension("gnomon_c")
+    pg = tmp_postgres_gnomon
+
+    # gnomon_c.control requires gnomon; create_extension walks that dependency
+    # even when the caller asks only for the C module.
+    assert pg.create_extension("gnomon_c").strip() == "CREATE EXTENSION"
+    installed = pg.psql(
+        "SELECT extname FROM pg_extension WHERE extname LIKE 'gnomon%' ORDER BY 1;"
+    )
+    assert "gnomon" in installed and "gnomon_c" in installed
+    assert pg._psql_scalar("SHOW gnomon.c_module") == "on"
+    assert pg._psql_scalar("SHOW gnomon.heartbeat_databases") == "postgres"
+
+    pg.psql(
+        """
+CREATE TABLE gnomon_orders (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    status text,
+    amount numeric
+);
+INSERT INTO gnomon_orders (status, amount) VALUES ('open', 10), ('paid', 20);
+SELECT gnomon.track('gnomon_orders');
+SELECT gnomon.create_branch('agent/refunds');
+SELECT gnomon.use('agent/refunds');
+UPDATE gnomon_orders SET status = 'refunded' WHERE id = 1;
+"""
+    )
+    # gnomon.use() is session-scoped; the update above ran on the branch in
+    # the same psql session, and this new session still reads main.
+    assert pg._psql_scalar("SELECT status FROM gnomon_orders WHERE id = 1") == "open"
+    diff = pg.psql("SELECT col, old, new FROM gnomon.diff('agent/refunds');")
+    assert "status" in diff and "refunded" in diff and "open" in diff
+
+    pg.psql("SELECT gnomon.merge('agent/refunds');")
+    assert pg._psql_scalar("SELECT status FROM gnomon_orders WHERE id = 1") == "refunded"
+
+
 CONTRIB_EXTENSIONS = (
     "pg_trgm",
     "unaccent",
@@ -959,6 +1027,8 @@ RELEASE_EXTENSION_ORDER = (
     "pgmq",
     "pg_partman",
     "pgtap",
+    "gnomon",
+    "gnomon_c",
     "pg_jsonschema",
     "pg_typesafe",
     "stannum",
@@ -971,6 +1041,7 @@ RELEASE_PRELOAD_PACKAGES = (
     "pg_cron",
     "pg_net",
     "provsql",
+    "gnomon_c",
 )
 RELEASE_PRELOAD_NAMES = (
     "vchord",
@@ -978,6 +1049,7 @@ RELEASE_PRELOAD_NAMES = (
     "pg_cron",
     "pg_net",
     "provsql",
+    "gnomon_c",
 )
 
 

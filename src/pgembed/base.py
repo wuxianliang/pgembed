@@ -72,7 +72,34 @@ BASE_PROFILE = ExtensionProfile(
     ),
 )
 
-PROFILES: dict[str, ExtensionProfile] = {BASE_PROFILE.name: BASE_PROFILE}
+# Gnomon is a second, opt-in profile: its C module installs planner/utility
+# hooks and a heartbeat worker for the whole cluster, so putting it in the base
+# profile would change every pgembed server even when the user never tracks a
+# table. Preload is still required for the module's routing and locks, and the
+# heartbeat database is the bootstrap database (`postgres`).
+GNOMON_PROFILE = ExtensionProfile(
+    name="gnomon",
+    extensions=(
+        "gnomon",
+        "gnomon_c",
+    ),
+    preload=("gnomon_c",),
+    settings={
+        # PGC_POSTMASTER: the worker only starts for databases listed before
+        # start. pgembed's initdb path always leaves the `postgres` database
+        # present, which is where bootstrap() creates the extensions.
+        "gnomon.heartbeat_databases": "postgres",
+    },
+    description=(
+        "version history, time travel, branches and three-way merges (gnomon) "
+        "with the C module's routing, locks and heartbeat worker (gnomon_c)"
+    ),
+)
+
+PROFILES: dict[str, ExtensionProfile] = {
+    BASE_PROFILE.name: BASE_PROFILE,
+    GNOMON_PROFILE.name: GNOMON_PROFILE,
+}
 
 
 @dataclass
@@ -92,7 +119,7 @@ class BootstrapReport:
 
     def summary(self) -> str:
         lines = [
-            f"pgembed base profile {self.profile!r} at {self.pgdata}",
+            f"pgembed profile {self.profile!r} at {self.pgdata}",
             f"  preload: {', '.join(self.preload) or '(none)'}",
             f"  created: {', '.join(self.created) or '(none)'}",
         ]
@@ -141,7 +168,7 @@ def _export_jev_api_key() -> None:
         token = os.environ.get(candidate)
         if token:
             os.environ["TYPESAFE_API_KEY"] = token
-            _logger.info("pgembed base: using %s as TYPESAFE_API_KEY", candidate)
+            _logger.info("pgembed: using %s as TYPESAFE_API_KEY", candidate)
             return
 
 
@@ -164,7 +191,8 @@ def bootstrap(
     Args:
         pgdata: Data directory. Defaults to :func:`pgembed.default_pgdata`, a
             per-user path created on demand.
-        profile: Named extension set. Only ``"base"`` ships today.
+        profile: Named extension set: ``"base"`` (vectors, search, queues) or
+            ``"gnomon"`` (history, branches, merges, and the C heartbeat module).
         extensions: Override the profile's extension list.
         preload: Override the profile's ``shared_preload_libraries``. Passing
             ``()`` starts with no preload, which makes extensions that require
@@ -221,7 +249,7 @@ def bootstrap(
             report.failed.append((name, reason))
             if strict:
                 raise
-            _logger.warning("pgembed base: %s failed: %s", name, reason)
+            _logger.warning("pgembed %s: %s failed: %s", profile, name, reason)
         else:
             report.created.append(name)
 

@@ -99,6 +99,8 @@ def test_release_bundle_contains_complete_attested_extension_set() -> None:
         "pgmq",
         "pg_partman",
         "pgtap",
+        "gnomon",
+        "gnomon_c",
         "pg_jsonschema",
         "pg_typesafe",
         "stannum",
@@ -122,7 +124,7 @@ def test_release_bundle_contains_complete_attested_extension_set() -> None:
         assert pgembed.has_extension(name)
         assert extension.control is not None
         assert extension.install_sql is not None
-        if name in {"pgmq", "pg_partman", "pgtap"}:
+        if name in {"pgmq", "pg_partman", "pgtap", "gnomon"}:
             assert extension.library is None
         else:
             assert extension.library is not None
@@ -144,6 +146,25 @@ def test_release_bundle_contains_complete_attested_extension_set() -> None:
     assert pgmq.version == "1.12.0"
     assert pgmq.has_library is False
     assert pgembed.get_extension_path("pgmq") is None
+
+    gnomon = metadata.extensions["gnomon"]
+    assert gnomon.requires_preload is False
+    assert gnomon.preload_name is None
+    assert gnomon.create_name == "gnomon"
+    assert gnomon.version == "1.0.2"
+    assert gnomon.has_library is False
+    assert gnomon.source_commit == makefile_pin("GNOMON_COMMIT")
+    assert pgembed.get_extension_path("gnomon") is None
+
+    gnomon_c = metadata.extensions["gnomon_c"]
+    assert gnomon_c.requires_preload is True
+    assert gnomon_c.preload_name == "gnomon_c"
+    assert gnomon_c.create_name == "gnomon_c"
+    assert gnomon_c.version == "1.0.2"
+    assert gnomon_c.has_library is True
+    assert gnomon_c.source_commit == makefile_pin("GNOMON_COMMIT")
+    assert gnomon_c.library is not None
+    assert (bundle_root / gnomon_c.library).is_file(), "gnomon_c library is missing"
 
     partman = metadata.extensions["pg_partman"]
     assert partman.requires_preload is False

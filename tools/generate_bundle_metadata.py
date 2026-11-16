@@ -66,6 +66,23 @@ EXTENSIONS: dict[str, dict[str, Any]] = {
         requires_preload=False,
         has_library=False,
     ),
+    # gnomon ships a SQL-only core and an optional C module. The C module's
+    # routing hooks, real row locks and heartbeat worker only work when the
+    # library is in shared_preload_libraries, so pgembed refuses to create it
+    # without that preload rather than silently giving a degraded extension.
+    "gnomon": dict(
+        stem="gnomon",
+        create_name="gnomon",
+        preload_name=None,
+        requires_preload=False,
+        has_library=False,
+    ),
+    "gnomon_c": dict(
+        stem="gnomon_c",
+        create_name="gnomon_c",
+        preload_name="gnomon_c",
+        requires_preload=True,
+    ),
     "pg_jsonschema": dict(
         stem="pg_jsonschema",
         create_name="pg_jsonschema",
@@ -757,6 +774,8 @@ def source_locks_from_stamp(stamp: dict[str, str]) -> list[str]:
         "age",
         "psql_bm25s",
         "plsh",
+        "gnomon",
+        "gnomon_c",
         "pg_jsonschema",
         "pg_typesafe",
         "stannum",

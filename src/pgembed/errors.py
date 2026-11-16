@@ -67,8 +67,8 @@ class PreloadRequiredError(PgEmbedError):
             f"Extension {create_name!r} requires the {preload_name!r} library in "
             f"shared_preload_libraries, but the running server loads only: {active}. "
             f"PostgreSQL cannot run CREATE EXTENSION {create_name} until it restarts "
-            f"with that library. Either call pgembed.bootstrap(profile='base') for a "
-            f"preload-configured base, or pass "
+            f"with that library. Either bootstrap a profile that preloads it (see "
+            f"pgembed.base.PROFILES for each profile's preload set), or pass "
             f"shared_preload_libraries=[{preload_name!r}] when creating the server."
         )
 

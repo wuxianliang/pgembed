@@ -191,6 +191,9 @@ def test_source_lock_and_toolchain_are_recorded(tmp_path: Path) -> None:
     assert "pgmq=v1.12.0:e6bdbb2311a3bbf34439871a99ee1e5e87c79fdca2b1e6784411a51b079314d1" in text
     assert "pg_partman=v5.5.0:a3f100ae871677f0012579f58542c174900297f664a4ad2be0256e7ee5e33502" in text
     assert "pgtap=v1.3.4:d2c951afb296a001d21785611a8e966e3f8fa3f5bfbd929396a5130c0152f314" in text
+    assert f"gnomon={makefile_pin('GNOMON_COMMIT')}" in text
+    assert f"gnomon_c={makefile_pin('GNOMON_COMMIT')}" in text
+    assert "gnomon_version=1.0.2" in text
     assert "pg_jsonschema=d08e4dea14549858b54791d6da4f606dc58a512e" in text
     assert "pg_jsonschema_pgrx=0.19.2" in text
     assert f"pg_typesafe={makefile_pin('PG_TYPESAFE_COMMIT')}" in text
@@ -216,6 +219,9 @@ def test_pgmq_install_uses_two_pgxs_invocations() -> None:
     assert makefile.count("$(MAKE) -C $(PG_PARTMAN_DIR)") == 2
     assert "NO_BGW=1" in makefile
     assert makefile.count("$(MAKE) -C $(PGTAP_DIR)") == 2
+    # gnomon installs both extensions from one tree: two invocations each.
+    assert makefile.count("$(MAKE) -C $(GNOMON_DIR) PG_CONFIG") == 2
+    assert makefile.count("$(MAKE) -C $(GNOMON_DIR)/src/c PG_CONFIG") == 2
     assert "$(MAKE) -C $(POSTGRES_BLD)/contrib" in makefile
     assert "--with-ssl=openssl" in makefile
 

@@ -41,9 +41,32 @@ def test_base_profile_preloads_every_extension_that_needs_it():
         )
 
 
+def test_every_profile_preloads_every_extension_that_needs_it():
+    for profile in PROFILES.values():
+        for name in profile.extensions:
+            metadata = pgembed.get_extension_metadata(pgembed.resolve_extension_name(name))
+            if metadata is None or not metadata.requires_preload:
+                continue
+            assert metadata.preload_name in profile.preload, (
+                f"{profile.name}: {name} requires {metadata.preload_name!r} "
+                "in shared_preload_libraries"
+            )
+
+
 def test_base_profile_is_registered():
     assert PROFILES["base"] is BASE_PROFILE
     assert BASE_PROFILE.extensions
+
+
+def test_gnomon_profile_is_registered():
+    from pgembed.base import GNOMON_PROFILE
+
+    assert PROFILES["gnomon"] is GNOMON_PROFILE
+    assert GNOMON_PROFILE.extensions == ("gnomon", "gnomon_c")
+    assert "gnomon_c" in GNOMON_PROFILE.preload
+    # The C module's heartbeat worker only starts for databases listed before
+    # the postmaster does; bootstrap creates the extensions in `postgres`.
+    assert GNOMON_PROFILE.settings["gnomon.heartbeat_databases"] == "postgres"
 
 
 def test_base_profile_steers_jev_at_the_gateway():
@@ -79,6 +102,23 @@ def test_bootstrap_creates_the_base_extension_set(tmp_path):
     installed = server.psql("SELECT extname FROM pg_extension ORDER BY 1;")
     for create_name in ("vector", "vchord", "stannum", "typesafe", "pgmq", "ltree"):
         assert create_name in installed, f"{create_name} missing from {installed}"
+
+
+@integration
+def test_bootstrap_creates_the_gnomon_extension_set(tmp_path):
+    server = bootstrap(tmp_path / "data", profile="gnomon", cleanup_mode="delete")
+    report = server.bootstrap_report
+
+    assert report.ok, report.summary()
+    assert "gnomon_c" in server.running_preload_libraries()
+
+    installed = server.psql(
+        "SELECT extname FROM pg_extension WHERE extname LIKE 'gnomon%' ORDER BY 1;"
+    )
+    assert "gnomon" in installed, installed
+    assert "gnomon_c" in installed, installed
+    assert server._psql_scalar("SHOW gnomon.heartbeat_databases") == "postgres"
+    assert server._psql_scalar("SHOW gnomon.c_module") == "on"
 
 
 @integration

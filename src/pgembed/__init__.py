@@ -57,6 +57,8 @@ EXTENSION_PACKAGES = {
     "pgmq": None,
     "pg_partman": None,
     "pgtap": None,
+    "gnomon": None,
+    "gnomon_c": None,
     "pg_jsonschema": None,
     "pg_typesafe": None,
     "stannum": "pgembed_stannum",
@@ -83,6 +85,8 @@ EXTENSION_SO_FILES = {
     "pgmq": (),
     "pg_partman": (),
     "pgtap": (),
+    "gnomon": (),
+    "gnomon_c": ("gnomon_c.dylib", "gnomon_c.so", "gnomon_c.dll"),
     "pg_jsonschema": ("pg_jsonschema.dylib", "pg_jsonschema.so", "pg_jsonschema.dll"),
     "pg_typesafe": ("typesafe.dylib", "typesafe.so", "typesafe.dll"),
     "stannum": ("stannum.dylib", "stannum.so", "stannum.dll"),
@@ -95,6 +99,9 @@ EXTENSION_SO_FILES = {
 # create_extension() walks this map before issuing CREATE EXTENSION provsql.
 EXTENSION_PRECEDENCE: dict[str, tuple[str, ...]] = {
     "provsql": ("uuid-ossp",),
+    # gnomon_c.control declares `requires = 'gnomon'`; create the SQL core first
+    # so a caller never sees a raw dependency error from CREATE EXTENSION.
+    "gnomon_c": ("gnomon",),
 }
 EXTENSION_NAMES = tuple(EXTENSION_PACKAGES)
 AVAILABLE_EXTENSIONS: dict[str, bool] = {name: False for name in EXTENSION_NAMES}
@@ -267,6 +274,8 @@ def get_extension_create_name(name: str) -> str:
         "pgmq": "pgmq",
         "pg_partman": "pg_partman",
         "pgtap": "pgtap",
+        "gnomon": "gnomon",
+        "gnomon_c": "gnomon_c",
         "pg_jsonschema": "pg_jsonschema",
         "pg_typesafe": "typesafe",
         "stannum": "stannum",

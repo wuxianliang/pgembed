@@ -46,9 +46,9 @@ RUST_EXTENSIONS_SUPPORTED := $(if $(filter 1,$(IS_MUSL)),0,1)
 BUILD_JOBS ?= $(shell n=$$(sysctl -n hw.ncpu 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4); if [ $$n -gt 8 ]; then echo 8; else echo $$n; fi)
 
 ifeq ($(RUST_EXTENSIONS_SUPPORTED),1)
-EXTENSIONS ?= pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema pg_typesafe tigerfs stannum uuid-ossp provsql
+EXTENSIONS ?= pgvector vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap gnomon gnomon_c pg_jsonschema pg_typesafe tigerfs stannum uuid-ossp provsql
 else
-EXTENSIONS ?= pgvector age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema pg_typesafe tigerfs stannum uuid-ossp provsql
+EXTENSIONS ?= pgvector age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap gnomon gnomon_c pg_jsonschema pg_typesafe tigerfs stannum uuid-ossp provsql
 endif
 REQUESTED_EXTENSIONS := $(strip $(EXTENSIONS))
 # provsql.control declares `requires = 'uuid-ossp'`; keep the dependency in the
@@ -307,6 +307,22 @@ PGTAP_SHA256 := d2c951afb296a001d21785611a8e966e3f8fa3f5bfbd929396a5130c0152f314
 PGTAP_URL := https://github.com/theory/pgtap/archive/refs/tags/$(PGTAP_TAG).tar.gz
 PGTAP_DIR := pgtap-$(PGTAP_TAG)
 
+# gnomon is two PGXS extensions from one tree: a SQL-only core (`gnomon`) and
+# an optional C module (`gnomon_c`). The core is what CREATE EXTENSION gnomon
+# installs; the C module adds routing, locks, a faster write path and the
+# heartbeat worker, and needs shared_preload_libraries = 'gnomon_c'.
+#
+# v1.0.2 is not tagged upstream (the newest tag is v1.0.1), while this tree's
+# control files already declare 1.0.2. Pin the commit whose tree those files
+# came from, not the moving main branch; GNOMON_VERSION makes reattestation fail
+# if the installed payload ever comes from a different tree.
+GNOMON_COMMIT := 0e641e6f9167de6221fd46fc3e3fc67dc4101553
+GNOMON_VERSION := 1.0.2
+GNOMON_REPO := https://github.com/bitsinfra/gnomon.git
+GNOMON_SHA256 := b3d67433dd1391ae9bc4f06f0f18268586d6550cd75607baffa8278a011d6ebd
+GNOMON_URL := https://codeload.github.com/bitsinfra/gnomon/tar.gz/$(GNOMON_COMMIT)
+GNOMON_DIR := gnomon-$(GNOMON_COMMIT)
+
 # pgrx extension. Pin the commit that bumped pgrx to 0.19.2 (PG18.4), not the
 # v0.3.4 tag (pgrx 0.16.1, PG18 beta2). cargo-pgrx is installed into the
 # source tree so it does not collide with VectorChord's 0.17.0 CLI.
@@ -362,7 +378,7 @@ STANNUM_PGRX_VERSION := 0.19.1
 STANNUM_PGRX_ROOT := $(STANNUM_DIR)/.pgrx-cli
 STANNUM_PGRX_HOME := $(STANNUM_DIR)/.pgrx-home
 
-NATIVE_BUILD_DIRS := $(POSTGRES_SRC) $(POSTGRES_BLD) $(PGVECTOR_DIR) $(VECTORCHORD_DIR) $(AGE_DIR) $(PSQL_BM25S_DIR) $(TIMESCALEDB_DIR) $(PG_CRON_DIR) $(PG_NET_DIR) $(PGSQL_HTTP_DIR) $(PLSH_DIR) $(FIREBIRD_FDW_DIR) $(LIBFQ_DIR) $(LIBTOMMATH_DIR) $(FIREBIRD_FDW_DEPS_DIR) $(PGMQ_DIR) $(PG_PARTMAN_DIR) $(PGTAP_DIR) $(PG_JSONSCHEMA_DIR) $(PG_TYPESAFE_DIR) $(STANNUM_DIR) $(OSSP_UUID_DIR) $(PROVSQL_DIR) $(UUID_OSSP_DIR)
+NATIVE_BUILD_DIRS := $(POSTGRES_SRC) $(POSTGRES_BLD) $(PGVECTOR_DIR) $(VECTORCHORD_DIR) $(AGE_DIR) $(PSQL_BM25S_DIR) $(TIMESCALEDB_DIR) $(PG_CRON_DIR) $(PG_NET_DIR) $(PGSQL_HTTP_DIR) $(PLSH_DIR) $(FIREBIRD_FDW_DIR) $(LIBFQ_DIR) $(LIBTOMMATH_DIR) $(FIREBIRD_FDW_DEPS_DIR) $(PGMQ_DIR) $(PG_PARTMAN_DIR) $(PGTAP_DIR) $(GNOMON_DIR) $(PG_JSONSCHEMA_DIR) $(PG_TYPESAFE_DIR) $(STANNUM_DIR) $(OSSP_UUID_DIR) $(PROVSQL_DIR) $(UUID_OSSP_DIR)
 
 .PHONY: FORCE
 FORCE:
@@ -422,6 +438,9 @@ $(POSTGRES_BUNDLE_CONFIG_STAMP): FORCE
 		'pgmq=$(PGMQ_TAG):$(PGMQ_SHA256)' \
 		'pg_partman=$(PG_PARTMAN_TAG):$(PG_PARTMAN_SHA256)' \
 		'pgtap=$(PGTAP_TAG):$(PGTAP_SHA256)' \
+		'gnomon=$(GNOMON_COMMIT)' \
+		'gnomon_c=$(GNOMON_COMMIT)' \
+		'gnomon_version=$(GNOMON_VERSION)' \
 		'pg_jsonschema=$(PG_JSONSCHEMA_COMMIT)' \
 		'pg_jsonschema_pgrx=$(PG_JSONSCHEMA_PGRX_VERSION)' \
 		'pg_typesafe=$(PG_TYPESAFE_COMMIT)' \
@@ -440,7 +459,7 @@ $(POSTGRES_BUNDLE_CONFIG_STAMP): FORCE
 	rm -rf "$(INSTALL_PREFIX)" $(NATIVE_BUILD_DIRS); \
 	mv -f "$$tmp" "$@"
 
-.PHONY: all postgres pgvector provsql uuid-ossp vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap pg_jsonschema pg_typesafe tigerfs stannum relativize bundle-metadata reattest
+.PHONY: all postgres pgvector provsql uuid-ossp vectorchord age psql_bm25s timescaledb pg_cron pg_net pgsql_http plsh firebird_fdw pgmq pg_partman pgtap gnomon gnomon_c pg_jsonschema pg_typesafe tigerfs stannum relativize bundle-metadata reattest
 all: postgres $(EXTENSIONS) relativize bundle-metadata
 postgres: $(INSTALL_PREFIX)/bin/postgres
 pgvector: postgres $(INSTALL_PREFIX)/lib/postgresql/vector.$(PG_DLSUFFIX)
@@ -463,6 +482,10 @@ endif
 pgmq: postgres $(INSTALL_PREFIX)/share/postgresql/extension/pgmq.control
 pg_partman: postgres $(INSTALL_PREFIX)/share/postgresql/extension/pg_partman.control
 pgtap: postgres $(INSTALL_PREFIX)/share/postgresql/extension/pgtap.control
+# One recipe installs both gnomon extensions; `gnomon_c` depends on it so
+# `all` can list the pair without racing two builds in the same source tree.
+gnomon: postgres $(INSTALL_PREFIX)/share/postgresql/extension/gnomon.control
+gnomon_c: gnomon
 ifeq ($(RUST_EXTENSIONS_SUPPORTED),1)
 pg_jsonschema: postgres $(INSTALL_PREFIX)/lib/postgresql/pg_jsonschema.$(PG_DLSUFFIX)
 else
@@ -857,6 +880,30 @@ $(PGTAP_DIR)/Makefile: $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PGTAP_DIR).tar.gz
 $(INSTALL_PREFIX)/share/postgresql/extension/pgtap.control: $(POSTGRES_BUNDLE_CONFIG_STAMP) $(PGTAP_DIR)/Makefile $(INSTALL_PREFIX)/bin/postgres
 	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(PGTAP_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config -j$(BUILD_JOBS) && $(MAKE) -C $(PGTAP_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config install
 
+$(GNOMON_DIR).tar.gz:
+	@set -eu; \
+	tmp="$@.tmp.$$$$"; trap 'rm -f "$$tmp"' EXIT HUP INT TERM; \
+	curl --fail --location --show-error --proto '=https' --proto-redir '=https' --retry 3 -o "$$tmp" "$(GNOMON_URL)"; \
+	printf '%s  %s\n' '$(GNOMON_SHA256)' "$$tmp" | $(SHA256_CMD) -c -; \
+	mv -f "$$tmp" "$@"
+
+$(GNOMON_DIR)/Makefile: $(POSTGRES_BUNDLE_CONFIG_STAMP) $(GNOMON_DIR).tar.gz
+	printf '%s  %s\n' '$(GNOMON_SHA256)' '$(GNOMON_DIR).tar.gz' | $(SHA256_CMD) -c -
+	mkdir -p $(GNOMON_DIR)
+	tar xzf $(GNOMON_DIR).tar.gz -C $(GNOMON_DIR) --strip-components=1
+	grep -q "^default_version = '$(GNOMON_VERSION)'" $(GNOMON_DIR)/gnomon.control
+	grep -q "^default_version = '$(GNOMON_VERSION)'" $(GNOMON_DIR)/src/c/gnomon_c.control
+	touch $@
+
+# The C module is optional at CREATE EXTENSION time, but its routing hooks and
+# heartbeat worker only work when preloaded. Both extensions are installed here
+# so a bundle-level `CREATE EXTENSION gnomon_c` never precedes its dependency.
+$(INSTALL_PREFIX)/share/postgresql/extension/gnomon.control: $(POSTGRES_BUNDLE_CONFIG_STAMP) $(GNOMON_DIR)/Makefile $(INSTALL_PREFIX)/bin/postgres
+	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(GNOMON_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config -j$(BUILD_JOBS) && $(MAKE) -C $(GNOMON_DIR) PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config install
+	unset MAKELEVEL MAKEFLAGS MFLAGS && $(MAKE) -C $(GNOMON_DIR)/src/c PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config -j$(BUILD_JOBS) && $(MAKE) -C $(GNOMON_DIR)/src/c PG_CONFIG=$(INSTALL_PREFIX)/bin/pg_config install
+	test -f $(INSTALL_PREFIX)/lib/postgresql/gnomon_c.$(PG_DLSUFFIX)
+	test -f $(INSTALL_PREFIX)/share/postgresql/extension/gnomon_c.control
+
 $(PG_JSONSCHEMA_SOURCE_VERIFIED): $(POSTGRES_BUNDLE_CONFIG_STAMP)
 	@set -eu; \
 	rm -rf "$(PG_JSONSCHEMA_DIR)"; \
@@ -1006,11 +1053,15 @@ reattest:
 		--source-lock "pgmq=sha256:$(PGMQ_SHA256):$(PGMQ_TAG)" \
 		--source-lock "pg_partman=sha256:$(PG_PARTMAN_SHA256):$(PG_PARTMAN_TAG)" \
 		--source-lock "pgtap=sha256:$(PGTAP_SHA256):$(PGTAP_TAG)" \
+		--source-lock "gnomon=commit:$(GNOMON_COMMIT)" \
+		--source-lock "gnomon_c=commit:$(GNOMON_COMMIT)" \
 		--source-lock "pg_jsonschema=commit:$(PG_JSONSCHEMA_COMMIT)" \
 		--source-lock "pg_typesafe=commit:$(PG_TYPESAFE_COMMIT)" \
 		--source-lock "stannum=commit:$(STANNUM_COMMIT)" \
 		--expected-version "pg_typesafe=$(PG_TYPESAFE_VERSION)" \
 		--expected-version "stannum=$(STANNUM_VERSION)" \
+		--expected-version "gnomon=$(GNOMON_VERSION)" \
+		--expected-version "gnomon_c=$(GNOMON_VERSION)" \
 		--source-lock "tigerfs=sha256:$(TIGERFS_EXPECTED_SHA256):$(TIGERFS_TAG)"
 	@mkdir -p "$$(dirname "$(BUNDLE_COMPLETION_MARKER)")"; tmp="$(BUNDLE_COMPLETION_MARKER).tmp.$$$$"; trap 'rm -f "$$tmp"' EXIT HUP INT TERM; printf '%s\n' 'schema=1' 'postgres=$(POSTGRES_VERSION)' 'metadata=build-metadata.json' > "$$tmp"; mv -f "$$tmp" "$(BUNDLE_COMPLETION_MARKER)"
 
